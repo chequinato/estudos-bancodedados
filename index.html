@@ -93,7 +93,7 @@
         </div>
         <div class="band-grid" id="telemetry"></div>
         <div class="band-act">
-          <button class="act" id="goReview">
+          <button class="act act--primary" id="goReview">
             <div class="act__k">Ação recomendada</div>
             <div class="act__t">Revisar os cards de hoje</div>
             <div class="act__s" id="actReviewSub"></div>
@@ -109,6 +109,15 @@
       <div class="section">
         <div class="section__head">
           <span class="idx">§ 01</span>
+          <h2 class="section__t">O que estudar agora</h2>
+          <span class="section__meta">A partir do seu rendimento</span>
+        </div>
+        <div class="recs" id="recs"></div>
+      </div>
+
+      <div class="section">
+        <div class="section__head">
+          <span class="idx">§ 02</span>
           <h2 class="section__t">Módulos</h2>
           <span class="section__meta">Domínio por assunto</span>
         </div>
@@ -117,7 +126,7 @@
 
       <div class="section">
         <div class="section__head">
-          <span class="idx">§ 02</span>
+          <span class="idx">§ 03</span>
           <h2 class="section__t">Como usar</h2>
         </div>
         <div class="prose" style="padding-top:18px">
@@ -145,7 +154,7 @@
       <div class="masthead">
         <div class="masthead__kicker"><b>Flashcards</b> <span>repetição espaçada em 5 caixas</span></div>
       </div>
-      <div class="chips" id="cardChips"></div>
+      <div class="filters" id="cardChips"></div>
       <div class="card-stage" id="cardStage"></div>
       <div class="progstrip" id="cardProg"></div>
       <div class="foot"><span id="cardHint"></span></div>
@@ -156,7 +165,7 @@
       <div class="masthead">
         <div class="masthead__kicker"><b>Questões</b> <span>múltipla escolha com explicação</span></div>
       </div>
-      <div class="chips" id="quizChips"></div>
+      <div class="filters" id="quizChips"></div>
       <div class="quiz" id="quizStage"></div>
     </section>
 
@@ -165,7 +174,7 @@
       <div class="masthead">
         <div class="masthead__kicker"><b>Diagramas</b> <span>toque na imagem para ampliar</span></div>
       </div>
-      <div class="chips" id="dChips"></div>
+      <div class="filters" id="dChips"></div>
       <div id="dList"></div>
       <div class="foot"><span>DERs originais das aulas 03 a 05 · figuras do guia · diagramas autorais</span></div>
     </section>
@@ -196,6 +205,8 @@
 <script src="js/data-core.js"></script>
 <script src="js/data-cards.js"></script>
 <script src="js/data-quiz.js"></script>
+<script src="js/extra-cards.js"></script>
+<script src="js/extra-quiz.js"></script>
 <script src="js/data-oficina.js"></script>
 <script src="js/diagrams.js"></script>
 <script src="js/app.js"></script>

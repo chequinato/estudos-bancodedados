@@ -32,6 +32,31 @@ const PARTS = {
 };
 
 /* -------------------------------------------------------------------------
+   PARA ONDE MANDAR QUEM ESTÁ ERRANDO CADA MÓDULO
+   ref     ficha do Resumo · diag  diagrama · of  caso da Oficina
+   ------------------------------------------------------------------------- */
+
+const RECOMMEND = {
+  1:  { },
+  2:  { },
+  3:  { ref: 'r-sgbd' },
+  4:  { ref: 'r-sgbd' },
+  5:  { ref: 'r-arquiteturas' },
+  6:  { ref: 'r-simbolos',    diag: 'g-pipeline' },
+  7:  { diag: 'g-especiais',  of: 'of-locadora' },
+  8:  { diag: 'd-chaves',     of: 'of-locadora' },
+  9:  { diag: 'g-cardinalidades', of: 'of-agenda' },
+  10: { diag: 'd-reverso',    of: 'of-reverso' },
+  11: { diag: 'g-especiais',  of: 'of-biblioteca' },
+  12: { diag: 'g-especiais',  of: 'of-engenho' },
+  13: { ref: 'r-mapeamento' },
+  14: { ref: 'r-mapeamento',  diag: 'd-fk',  of: 'of-locadora' },
+  15: { ref: 'r-temporal',    diag: 'g-temporal', of: 'of-agenda' },
+  16: { ref: 'r-fn',          diag: 'd-fn',  of: 'of-pedido' },
+  17: { ref: 'r-reverso',     diag: 'd-roteiro', of: 'of-casamento' }
+};
+
+/* -------------------------------------------------------------------------
    DIAGRAMAS
    src: 'autoral' (feitos para este sistema) | 'guia' | 'aula' (do professor)
    ------------------------------------------------------------------------- */

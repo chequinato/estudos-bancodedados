@@ -41,7 +41,9 @@ css/style.css         sistema visual completo
 js/data-core.js       módulos, diagramas e fichas de referência
 js/data-cards.js      166 flashcards
 js/data-quiz.js       105 questões com explicação
-js/data-oficina.js    4 casos guiados, do enunciado à 3FN
+js/extra-cards.js     contexto e resposta curta dos flashcards
+js/extra-quiz.js      cenário e explicação simples das questões
+js/data-oficina.js    8 casos guiados, do enunciado à 3FN
 js/diagrams.js        7 diagramas autorais em SVG
 js/app.js             roteamento, progresso e os motores de estudo
 assets/img/           DERs das aulas e figuras do guia
@@ -52,8 +54,8 @@ sw.js                 cache para uso offline
 
 | Tela | Para quê |
 | --- | --- |
-| **Painel** | Domínio por módulo, o que revisar hoje, atalhos |
-| **Oficina** | O processo inteiro passo a passo: entidades → atributos → cardinalidade → casos especiais → DER → Modelo Relacional → 1FN/2FN/3FN |
+| **Painel** | Indicadores de rendimento e a seção **O que estudar agora**, que lê seus erros e aponta o próximo passo |
+| **Oficina** | 8 casos, o processo inteiro passo a passo: entidades → atributos → cardinalidade → casos especiais → DER → Modelo Relacional → 1FN/2FN/3FN |
 | **Cards** | Repetição espaçada em 5 caixas, para memorizar listas e definições |
 | **Questões** | Múltipla escolha com explicação em toda resposta, filtros por módulo e "só as que errei" |
 | **DER** | Diagramas do professor e autorais, com uma lista do que olhar em cada um |

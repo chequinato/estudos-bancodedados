@@ -500,6 +500,498 @@ SETOR(COD_SETOR pk, DESCRICAO)</div>
       ]
     }
   ]
+},
+
+/* ══════════════════════════════════════════════ CASO 5 — AGENDA MÉDICA ══ */
+{
+  id: 'of-agenda',
+  n: 5,
+  t: 'Agenda Médica',
+  nivel: 'Completo — com aspecto temporal',
+  tags: 'N:N · histórico · DATA na chave',
+  intro: 'O caso que mostra por que a DATA entra na chave. Aqui o sistema precisa do histórico, e é isso que transforma um relacionamento simples em N:N identificado por data e hora.',
+  enunciado: `
+    <p>Uma clínica quer informatizar a agenda.</p>
+    <p>Cada <strong>médico</strong> tem CRM, nome e atua em <strong>uma ou mais especialidades</strong>
+    (código, descrição). Uma mesma especialidade é exercida por vários médicos.</p>
+    <p>Cada <strong>paciente</strong> tem código, nome, data de nascimento e pertence a um
+    <strong>convênio</strong> (código, nome, percentual de cobertura).</p>
+    <p>Uma <strong>consulta</strong> acontece em uma data e hora, entre um médico e um paciente,
+    em uma <strong>sala</strong> (número, andar).</p>
+    <p class="serif-note">A clínica exige o <strong>histórico completo</strong>: o mesmo paciente pode
+    consultar o mesmo médico quantas vezes for preciso, e todas precisam ficar registradas.</p>`,
+  steps: [
+    {
+      k: 'pick',
+      t: 'Passo 1 — Entidades',
+      q: 'Marque as entidades. Duas armadilhas aqui: algo que parece atributo é entidade, e algo que parece entidade é relacionamento.',
+      items: [
+        { t: 'MEDICO',        ok: 1, why: 'CRM e nome próprios, várias ocorrências.' },
+        { t: 'ESPECIALIDADE', ok: 1, why: 'A armadilha nº 1. Parece atributo do médico, mas tem código e descrição próprios e várias ocorrências — e um médico tem várias. É entidade.' },
+        { t: 'PACIENTE',      ok: 1, why: 'Entidade fundamental.' },
+        { t: 'CONVENIO',      ok: 1, why: 'Código, nome e percentual próprios. Vários pacientes usam o mesmo convênio.' },
+        { t: 'SALA',          ok: 1, why: 'Número e andar próprios.' },
+        { t: 'CONSULTA',      ok: 1, why: 'Tem atributos próprios (data, hora) e liga médico a paciente. Como precisa guardar histórico, ela ganha existência própria no modelo.' },
+        { t: 'DATA',          ok: 0, why: 'A armadilha nº 2. É atributo da consulta — só que um atributo especial: vai entrar na identificação. Isso não a torna entidade.' },
+        { t: 'CRM',           ok: 0, why: 'É o identificador do médico.' }
+      ]
+    },
+    {
+      k: 'assign',
+      t: 'Passo 2 — Cardinalidades',
+      q: 'Lembre que o enunciado exige histórico. Isso muda algumas respostas.',
+      opts: ['1 : 1', '1 : N', 'N : N'],
+      rows: [
+        { t: 'MEDICO — atua em — ESPECIALIDADE', a: 2, why: 'Um médico tem várias especialidades e uma especialidade tem vários médicos. N:N puro — gera a tabela MEDICO_ESPECIALIDADE.' },
+        { t: 'CONVENIO — cobre — PACIENTE',      a: 1, why: 'Um convênio cobre vários pacientes; cada paciente tem um. FK cod_convenio em PACIENTE.' },
+        { t: 'MEDICO — atende — PACIENTE',       a: 2, why: 'Sem histórico seria 1:N. Com histórico vira N:N: o mesmo médico atende vários pacientes e o mesmo paciente volta a vários médicos, várias vezes.' },
+        { t: 'SALA — abriga — CONSULTA',         a: 1, why: 'Uma sala abriga várias consultas ao longo do dia; cada consulta ocorre em uma sala. FK nr_sala em CONSULTA.' }
+      ]
+    },
+    {
+      k: 'pick',
+      t: 'Passo 3 — Por que a DATA entra na chave',
+      q: 'A clínica quer registrar que o paciente 42 consultou a médica de CRM 1234 em 03/03 e de novo em 17/04. Por que <code>(CRM, COD_PAC)</code> não basta como chave?',
+      items: [
+        { t: 'Porque o mesmo par pode se relacionar mais de uma vez', ok: 1, why: 'Exatamente. Duas consultas do mesmo par gerariam duas linhas idênticas — e uma PK não admite duplicata.' },
+        { t: 'Porque a DATA diferencia as ocorrências',               ok: 1, why: 'É o papel dela: separar uma consulta da outra. Por isso ela vira identificadora.' },
+        { t: 'Porque guardar histórico é o que provoca essa mudança', ok: 1, why: 'Se só interessasse a última consulta, a data seria um atributo comum. É o histórico que a promove a chave.' },
+        { t: 'Porque CRM não é uma boa chave primária',               ok: 0, why: 'CRM é único e imutável — é uma boa PK para MEDICO. O problema não é ele.' },
+        { t: 'Porque o SGBD exige chaves compostas em N:N',           ok: 0, why: 'O SGBD não exige nada disso. A chave composta vem da regra de negócio, não do banco.' },
+        { t: 'Porque a data ocupa menos espaço que um código',        ok: 0, why: 'Espaço não tem nada a ver com a escolha da chave. O critério é identificar unicamente.' }
+      ]
+    },
+    {
+      k: 'assign',
+      t: 'Passo 4 — De quem é cada atributo?',
+      q: 'Decida onde cada atributo mora. É o passo que mais gera desconto na correção.',
+      opts: ['Da entidade', 'Do relacionamento'],
+      rows: [
+        { t: 'PERC_COBERTURA', a: 0, why: 'É característica do convênio, igual para todos os pacientes dele.' },
+        { t: 'DATA da consulta', a: 1, why: 'Não é do médico nem do paciente: é daquele encontro específico. Pertence ao relacionamento — e ainda por cima identifica.' },
+        { t: 'HORA da consulta', a: 1, why: 'Mesma coisa. Junto com a data, separa duas consultas do mesmo par no mesmo dia.' },
+        { t: 'ANDAR', a: 0, why: 'É característica da sala.' },
+        { t: 'DATA_NASC', a: 0, why: 'É característica do paciente.' }
+      ]
+    },
+    {
+      k: 'reveal',
+      t: 'Passo 5 — Desenhe o DER',
+      q: 'Desenhe: cinco retângulos, o losango N:N entre MEDICO e ESPECIALIDADE, e CONSULTA ligando MEDICO e PACIENTE com DATA e HORA sublinhadas no losango.',
+      model: `<p>Duas formas corretas de desenhar a consulta:</p>
+        <ul>
+          <li><strong>Como losango com atributos</strong> — <code>MEDICO N — CONSULTA — N PACIENTE</code>,
+          com DATA e HORA pendurados e sublinhados. É a leitura mais fiel ao MER.</li>
+          <li><strong>Como entidade associativa</strong> — um retângulo CONSULTA entre os dois,
+          com dois relacionamentos 1:N. É o que acontece de fato no mapeamento.</li>
+        </ul>
+        <p>As duas chegam ao mesmo Modelo Relacional. Se o professor não pedir uma delas
+        explicitamente, escolha a primeira e mencione a segunda embaixo do desenho.</p>`,
+      check: [
+        'MEDICO, ESPECIALIDADE, PACIENTE, CONVENIO e SALA em retângulos',
+        'CRM, COD_ESP, COD_PAC, COD_CONV e NR_SALA sublinhados',
+        'Losango N:N entre MEDICO e ESPECIALIDADE, sem atributos',
+        'CONSULTA como N:N entre MEDICO e PACIENTE, com DATA e HORA',
+        'DATA e HORA sublinhadas — elas fazem parte da identificação',
+        'SALA ligada à consulta com cardinalidade 1:N'
+      ]
+    },
+    {
+      k: 'reveal',
+      t: 'Passo 6 — Modelo Relacional',
+      q: 'Escreva as relações. Preste atenção na chave de CONSULTA — ela tem quatro colunas.',
+      model: `<div class="pre">MEDICO(CRM pk, NOME)
+ESPECIALIDADE(COD_ESP pk, DESCRICAO)
+MEDICO_ESPECIALIDADE(CRM pk/fk, COD_ESP pk/fk)
+CONVENIO(COD_CONV pk, NOME, PERC_COBERTURA)
+PACIENTE(COD_PAC pk, NOME, DATA_NASC, COD_CONV fk)
+SALA(NR_SALA pk, ANDAR)
+CONSULTA(CRM pk/fk, COD_PAC pk/fk, DATA pk, HORA pk, NR_SALA fk)</div>
+        <p>Repare que <code>CONSULTA</code> tem uma PK de <strong>quatro</strong> colunas: as duas
+        chaves das entidades mais data e hora. É o aspecto temporal materializado — sem data e hora
+        ali, a clínica não conseguiria registrar a segunda consulta do mesmo par.</p>
+        <p>E note que <code>MEDICO_ESPECIALIDADE</code> é uma associativa <em>pura</em>: só junta as
+        duas chaves, sem atributos próprios. Já <code>CONSULTA</code> é associativa
+        <em>atributiva</em> — carrega dados do próprio encontro.</p>`,
+      check: [
+        'Sete relações',
+        'MEDICO_ESPECIALIDADE nasceu do N:N e só tem as duas chaves',
+        'CONSULTA com PK de quatro colunas: CRM, COD_PAC, DATA e HORA',
+        'PACIENTE com COD_CONV como FK',
+        'NR_SALA em CONSULTA é FK, mas fica fora da PK'
+      ]
+    },
+    {
+      k: 'assign',
+      t: 'Passo 7 — E se não houvesse histórico?',
+      q: 'A clínica muda de ideia: só interessa a <strong>última</strong> consulta de cada paciente. O que acontece com o modelo?',
+      opts: ['Não muda', 'Vira 1:N', 'A DATA sai da chave', 'A tabela desaparece'],
+      rows: [
+        { t: 'A cardinalidade MEDICO — PACIENTE',   a: 1, why: 'Sem histórico, cada paciente tem uma consulta atual só: volta a ser 1:N, com FK no lado do paciente.' },
+        { t: 'A DATA no relacionamento',            a: 2, why: 'Sem várias ocorrências para diferenciar, a data volta a ser um atributo comum — sai da chave.' },
+        { t: 'A tabela MEDICO_ESPECIALIDADE',       a: 0, why: 'Nada muda. Esse N:N não tem nada a ver com tempo: um médico simplesmente tem várias especialidades.' }
+      ]
+    }
+  ]
+},
+
+/* ═══════════════════════════════════════════════ CASO 6 — BIBLIOTECA ════ */
+{
+  id: 'of-biblioteca',
+  n: 6,
+  t: 'Biblioteca universitária',
+  nivel: 'Completo — entidade fraca e N:N',
+  tags: 'Fraca · N:N · multivalorado',
+  intro: 'O caso da entidade fraca. Aqui existe algo que só é identificável dentro de outra coisa — e reconhecer isso muda a chave primária inteira.',
+  enunciado: `
+    <p>A biblioteca controla o acervo e os empréstimos.</p>
+    <p>Cada <strong>livro</strong> tem número de tombo, título, ano e editora, e pode ter
+    <strong>vários autores</strong>. Um mesmo autor escreve vários livros.</p>
+    <p>De cada livro a biblioteca possui vários <strong>exemplares</strong>, numerados
+    <strong>1, 2, 3… dentro daquele livro</strong>. Cada exemplar tem um estado de conservação.
+    O exemplar número 2 do livro 500 é diferente do exemplar número 2 do livro 700.</p>
+    <p>Cada <strong>usuário</strong> tem matrícula, nome e vários telefones.</p>
+    <p>Um usuário pega <strong>exemplares</strong> emprestados, registrando data de retirada e data
+    de devolução. O mesmo usuário pode pegar o mesmo exemplar em épocas diferentes.</p>`,
+  steps: [
+    {
+      k: 'assign',
+      t: 'Passo 1 — Classifique cada estrutura',
+      q: 'Antes de desenhar, identifique o que é cada coisa. Este é o passo 6 do roteiro feito primeiro, de propósito.',
+      opts: ['Entidade normal', 'Entidade fraca', 'Multivalorado', 'N:N'],
+      rows: [
+        { t: 'LIVRO',                    a: 0, why: 'Tombo próprio, existência própria.' },
+        { t: 'EXEMPLAR',                 a: 1, why: 'O número 2 só significa alguma coisa dentro do livro 500. Sozinho não identifica — é entidade fraca, e a PK será (tombo, nr_exemplar).' },
+        { t: 'AUTOR e LIVRO',            a: 3, why: 'Vários autores por livro, vários livros por autor. Gera tabela associativa.' },
+        { t: 'TELEFONE do usuário',      a: 2, why: 'Vários valores do mesmo tipo. Elipse dupla no DER, tabela no relacional.' },
+        { t: 'USUARIO e EXEMPLAR',       a: 3, why: 'O empréstimo é N:N — e como o mesmo par se repete no tempo, a data vai entrar na chave.' },
+        { t: 'USUARIO',                  a: 0, why: 'Matrícula própria, existência própria.' }
+      ]
+    },
+    {
+      k: 'pick',
+      t: 'Passo 2 — Por que EXEMPLAR é entidade fraca?',
+      q: 'Marque as afirmações verdadeiras sobre a entidade fraca deste caso.',
+      items: [
+        { t: 'O número do exemplar se repete entre livros diferentes', ok: 1, why: 'Existe exemplar 2 do livro 500 e exemplar 2 do livro 700. O número sozinho não identifica nada.' },
+        { t: 'A PK precisa incluir o tombo do livro',                  ok: 1, why: 'É a regra: a fraca recebe a PK da forte como parte da própria PK. Fica (NO_TOMBO, NR_EXEMPLAR).' },
+        { t: 'No DER ela aparece em retângulo duplo',                  ok: 1, why: 'É a notação da entidade fraca.' },
+        { t: 'O relacionamento que a liga ao livro é o identificador', ok: 1, why: 'Chama-se relacionamento identificador justamente porque é ele que permite identificá-la.' },
+        { t: 'Ela não pode ter atributos próprios',                    ok: 0, why: 'Pode, sim. Aqui ela tem ESTADO_CONSERVACAO. O que ela não tem é identificação própria.' },
+        { t: 'Ela não gera tabela no modelo relacional',               ok: 0, why: 'Gera, sim — com PK composta. Quem não gera tabela é o relacionamento 1:N comum.' },
+        { t: 'É a mesma coisa que uma entidade associativa',           ok: 0, why: 'Parecem no desenho, mas a motivação é outra: a fraca vem de dependência de existência, a associativa vem de resolver um N:N.' }
+      ]
+    },
+    {
+      k: 'assign',
+      t: 'Passo 3 — Cardinalidades',
+      q: 'Defina cada uma. Uma delas depende do histórico.',
+      opts: ['1 : 1', '1 : N', 'N : N'],
+      rows: [
+        { t: 'LIVRO — possui — EXEMPLAR',        a: 1, why: 'Um livro tem vários exemplares; cada exemplar é de um livro. É o relacionamento identificador da fraca.' },
+        { t: 'AUTOR — escreve — LIVRO',          a: 2, why: 'N:N clássico. Gera LIVRO_AUTOR com as duas chaves.' },
+        { t: 'USUARIO — pega emprestado — EXEMPLAR', a: 2, why: 'N:N, e com histórico: o mesmo usuário pode pegar o mesmo exemplar de novo. A data de retirada entra na chave.' }
+      ]
+    },
+    {
+      k: 'assign',
+      t: 'Passo 4 — Onde a chave transposta entra na PK?',
+      q: 'A mesma operação — levar a chave de uma tabela para outra — tem duas consequências diferentes. Decida cada caso.',
+      opts: ['Só FK, fora da PK', 'FK e parte da PK'],
+      rows: [
+        { t: 'NO_TOMBO dentro de EXEMPLAR',      a: 1, why: 'Entidade fraca: a chave transposta compõe a PK. Sem ela, o exemplar 2 seria ambíguo.' },
+        { t: 'COD_EDITORA dentro de LIVRO',      a: 0, why: 'Relacionamento 1:N comum: a FK desce e fica fora da PK. O tombo sozinho já identifica o livro.' },
+        { t: 'MATRICULA dentro de EMPRESTIMO',   a: 1, why: 'Tabela associativa de um N:N: as duas chaves compõem a PK, junto com a data.' },
+        { t: 'MATRICULA dentro de USUARIO_FONE', a: 1, why: 'Multivalorado: a PK é (MATRICULA, FONE). A matrícula sozinha não identifica o telefone.' }
+      ]
+    },
+    {
+      k: 'reveal',
+      t: 'Passo 5 — Desenhe o DER',
+      q: 'Desenhe. O retângulo duplo e a elipse dupla precisam aparecer.',
+      check: [
+        'EXEMPLAR em retângulo duplo, ligado a LIVRO',
+        'TELEFONE em elipse dupla no USUARIO',
+        'Losango N:N entre AUTOR e LIVRO',
+        'Losango N:N entre USUARIO e EXEMPLAR, com DATA_RETIRADA sublinhada',
+        'NO_TOMBO, MATRICULA e COD_AUTOR sublinhados',
+        'NR_EXEMPLAR sublinhado com traço tracejado ou marcado como chave parcial'
+      ],
+      model: `<p>Detalhe de notação que vale ponto: no exemplar, o <code>NR_EXEMPLAR</code> costuma ser
+        desenhado com <strong>sublinhado tracejado</strong>, para indicar que ele é uma chave
+        <em>parcial</em> — só identifica em conjunto com a chave da entidade forte. Se o professor não
+        cobrar essa notação, sublinhe normal e explique embaixo.</p>`
+    },
+    {
+      k: 'reveal',
+      t: 'Passo 6 — Modelo Relacional',
+      q: 'Escreva as seis relações com todas as chaves marcadas.',
+      model: `<div class="pre">LIVRO(NO_TOMBO pk, TITULO, ANO, EDITORA)
+AUTOR(COD_AUTOR pk, NOME)
+LIVRO_AUTOR(NO_TOMBO pk/fk, COD_AUTOR pk/fk)
+EXEMPLAR(NO_TOMBO pk/fk, NR_EXEMPLAR pk, ESTADO_CONSERVACAO)
+USUARIO(MATRICULA pk, NOME)
+USUARIO_FONE(MATRICULA pk/fk, FONE pk)
+EMPRESTIMO(MATRICULA pk/fk, NO_TOMBO pk/fk, NR_EXEMPLAR pk/fk,
+           DATA_RETIRADA pk, DATA_DEVOLUCAO)</div>
+        <p>Olhe a chave de <code>EMPRESTIMO</code>: <strong>quatro colunas</strong>. Ela precisa das
+        <em>duas</em> colunas do exemplar (porque o exemplar é fraco e sua PK já é composta), mais a
+        matrícula, mais a data. É o efeito dominó de uma entidade fraca participando de um N:N com
+        histórico — e é exatamente o tipo de detalhe que a correção procura.</p>
+        <p><code>DATA_DEVOLUCAO</code> fica <strong>fora</strong> da chave: ela é preenchida depois,
+        pode ser nula, e não ajuda a identificar o empréstimo.</p>`,
+      check: [
+        'Seis relações',
+        'EXEMPLAR com PK composta (NO_TOMBO, NR_EXEMPLAR)',
+        'LIVRO_AUTOR só com as duas chaves',
+        'USUARIO_FONE separado do USUARIO',
+        'EMPRESTIMO com PK de quatro colunas',
+        'DATA_DEVOLUCAO fora da chave'
+      ]
+    }
+  ]
+},
+
+/* ════════════════════════════════════════════════ CASO 7 — CASAMENTO ════ */
+{
+  id: 'of-casamento',
+  n: 7,
+  t: 'Casamento',
+  nivel: 'Da aula — papéis da mesma entidade',
+  tags: 'Auto-relacionamento · hipóteses',
+  intro: 'O exercício em que a mesma entidade participa de um relacionamento em dois papéis diferentes. E o único em que duas turmas chegaram a cardinalidades diferentes — as duas aceitas.',
+  enunciado: `
+    <div class="pre">Pessoa(PessID, PessNome, NascLocID, DataNasc,
+       FalecLocID, DataFalec, ProfID, Sexo)
+Local(LocID, Cidade, País)
+Profissão(ProfID, ProfName)
+Casamento(casamID, MaridoPessoaID, EsposaPessoaID, DataCasamento)</div>
+    <p>Desenhe o DER com as cardinalidades, <strong>adicionando as hipóteses que julgar
+    necessárias</strong>.</p>`,
+  steps: [
+    {
+      k: 'assign',
+      t: 'Passo 1 — Leia as pistas do esquema',
+      q: 'Cada coluna estranha do esquema conta uma história. Qual?',
+      opts: ['Atributo comum', 'FK para outra tabela', 'Duas FKs para a mesma tabela', 'Chave primária'],
+      rows: [
+        { t: 'Pessoa.NascLocID',                              a: 1, why: 'FK apontando para Local — representa o relacionamento NASCIMENTO.' },
+        { t: 'Pessoa.NascLocID e Pessoa.FalecLocID juntas',   a: 2, why: 'Duas FKs da mesma tabela para Local. São dois relacionamentos distintos: nascimento e falecimento.' },
+        { t: 'Casamento.MaridoPessoaID e EsposaPessoaID',     a: 2, why: 'Duas FKs para Pessoa. É a assinatura dos dois papéis — e o que torna isso um auto-relacionamento via CASAMENTO.' },
+        { t: 'Pessoa.DataNasc',                               a: 0, why: 'Atributo simples da pessoa.' },
+        { t: 'Local.LocID',                                   a: 3, why: 'Identificador da tabela Local.' }
+      ]
+    },
+    {
+      k: 'pick',
+      t: 'Passo 2 — Os dois papéis',
+      q: 'PESSOA se liga a CASAMENTO por <strong>dois</strong> losangos. O que é verdade sobre isso?',
+      items: [
+        { t: 'Há um único retângulo PESSOA no desenho',        ok: 1, why: 'Um só. Desenhar dois retângulos PESSOA seria duplicar a entidade.' },
+        { t: 'Os dois losangos se chamam MARIDO e ESPOSA',     ok: 1, why: 'São os rótulos de papel — eles explicitam qual função a pessoa cumpre naquele relacionamento.' },
+        { t: 'É um caso de auto-relacionamento',               ok: 1, why: 'A entidade PESSOA se relaciona consigo mesma, mediada pela entidade CASAMENTO.' },
+        { t: 'Deveríamos criar as entidades MARIDO e ESPOSA',  ok: 0, why: 'Não. Marido e esposa <em>são</em> pessoas — criar entidades separadas duplicaria tudo, do mesmo jeito que criar "Supervisor" separado de "Funcionário".' },
+        { t: 'CASAMENTO é uma entidade fraca',                 ok: 0, why: 'Ela tem identificador próprio, o casamID. Não depende de outra para ser identificada.' },
+        { t: 'É um relacionamento ternário',                   ok: 0, why: 'Ternário exige três entidades diferentes. Aqui há duas — PESSOA e CASAMENTO — em dois relacionamentos binários.' }
+      ]
+    },
+    {
+      k: 'assign',
+      t: 'Passo 3 — Cardinalidades',
+      q: 'O enunciado manda adotar hipóteses. Escolha a leitura <strong>mais defensável no mundo real</strong> para cada relacionamento.',
+      opts: ['1 : 1', 'N : 1', 'N : N'],
+      rows: [
+        { t: 'PESSOA — NASCIMENTO — LOCAL',   a: 1, why: 'Um mesmo local é o nascimento de várias pessoas. Lado PESSOA é N, lado LOCAL é 1. A turma que respondeu 1:1 também foi aceita, mas esta leitura é mais fiel.' },
+        { t: 'PESSOA — FALECIMENTO — LOCAL',  a: 1, why: 'Mesmo raciocínio do nascimento.' },
+        { t: 'PESSOA — TEM — PROFISSÃO',      a: 1, why: 'Várias pessoas exercem a mesma profissão. O esquema confirma: ProfID é uma FK simples dentro de Pessoa.' },
+        { t: 'PESSOA — MARIDO — CASAMENTO',   a: 1, why: 'Cada casamento tem um marido; uma pessoa pode aparecer como marido em vários casamentos ao longo da vida. N pessoas para 1 casamento em cada registro.' }
+      ]
+    },
+    {
+      k: 'pick',
+      t: 'Passo 4 — O que salva a questão na prova',
+      q: 'Duas turmas entregaram cardinalidades diferentes e as duas foram aceitas. O que fez a diferença?',
+      items: [
+        { t: 'Escrever a hipótese adotada embaixo do desenho',  ok: 1, why: 'É isso. O enunciado pede hipóteses; declará-las é parte da resposta, não um extra.' },
+        { t: 'Ser coerente com a hipótese ao longo do modelo',  ok: 1, why: 'Se você assumiu N:1 no nascimento, o mapeamento tem que refletir isso. Incoerência é o que derruba.' },
+        { t: 'Acertar a estrutura: dois papéis, um retângulo',  ok: 1, why: 'A estrutura não é negociável, só as cardinalidades é que dependiam da hipótese.' },
+        { t: 'Usar exatamente os nomes do professor nos losangos', ok: 0, why: 'O nome do losango é escolha de quem modela. Nunca foi critério de correção neste exercício.' },
+        { t: 'Desenhar tudo com régua',                         ok: 0, why: 'Capricho ajuda a ler, mas não é conteúdo.' }
+      ]
+    },
+    {
+      k: 'reveal',
+      t: 'Passo 5 — Confira com o DER do professor',
+      q: 'Compare o seu desenho com a resolução original.',
+      img: 'caso1-casamento-der.png',
+      check: [
+        'Um único retângulo PESSOA',
+        'Dois losangos entre PESSOA e CASAMENTO: MARIDO e ESPOSA',
+        'Dois losangos entre PESSOA e LOCAL: NASCIMENTO e FALECIMENTO',
+        'Losango entre PESSOA e PROFISSÃO',
+        'CASAM_ID, PESS_ID, LOC_ID e PROF_ID sublinhados',
+        'A hipótese adotada escrita embaixo do desenho'
+      ],
+      model: `<p>Esta é a versão com cardinalidades <strong>1:1</strong>. Existe outra, de outra turma,
+        com <strong>N:1</strong> — as duas estão na aba <strong>DER</strong>. Abra as duas lado a
+        lado: é o melhor jeito de entender que, quando o enunciado pede hipóteses, a resposta certa é
+        a que está <em>declarada e coerente</em>, não a que está numa tabela de gabarito.</p>`
+    },
+    {
+      k: 'reveal',
+      t: 'Passo 6 — Modelo Relacional',
+      q: 'Escreva as relações. Aqui o mapeamento é quase direto, já que o esquema veio pronto.',
+      model: `<div class="pre">LOCAL(LOC_ID pk, CIDADE, PAIS)
+PROFISSAO(PROF_ID pk, PROF_NAME)
+PESSOA(PESS_ID pk, PESS_NOME, SEXO, DATA_NASC, DATA_FALEC,
+       NASC_LOC_ID fk → LOCAL,
+       FALEC_LOC_ID fk → LOCAL,
+       PROF_ID fk → PROFISSAO)
+CASAMENTO(CASAM_ID pk, DATA_CASAMENTO,
+          MARIDO_PESSOA_ID fk → PESSOA,
+          ESPOSA_PESSOA_ID fk → PESSOA)</div>
+        <p>Duas coisas que valem ponto: <code>PESSOA</code> referencia <code>LOCAL</code>
+        <strong>duas vezes</strong>, e <code>CASAMENTO</code> referencia <code>PESSOA</code>
+        <strong>duas vezes</strong>. Duas FKs para a mesma tabela é normal — o que muda é o
+        <em>papel</em> de cada uma, e é por isso que os nomes das colunas precisam ser diferentes.</p>`,
+      check: [
+        'Quatro relações',
+        'PESSOA com duas FKs para LOCAL, com nomes diferentes',
+        'CASAMENTO com duas FKs para PESSOA, com nomes diferentes',
+        'Nenhuma tabela extra criada — todos os relacionamentos são N:1'
+      ]
+    }
+  ]
+},
+
+/* ═══════════════════════════════════════════════ CASO 8 — NOTA FISCAL ═══ */
+{
+  id: 'of-notafiscal',
+  n: 8,
+  t: 'Nota Fiscal',
+  nivel: 'Da aula — normalização sozinho',
+  tags: '1FN · 2FN · 3FN',
+  intro: 'O exercício de normalização da aula, com menos apoio que o Pedido de Compra. Se você resolver este sem consultar, o assunto está fechado.',
+  enunciado: `
+    <p>Uma nota fiscal de venda tem, num documento só:</p>
+    <div class="pre">NOTA(NR_NOTA, DATA, HORA,
+     CNPJ_DEST, NOME_DEST, ENDERECO_DEST, CIDADE_DEST, UF_DEST,
+     PLACA_TRANSP, NOME_TRANSP,
+     ITEM, COD_PROD, DESCRICAO, UNID, QUANT, VL_UNIT, VL_TOTAL_ITEM,
+     BASE_CALCULO, VALOR_TOTAL_NOTA)</div>
+    <p>Cada nota tem vários itens. Normalize até a 3FN.</p>`,
+  steps: [
+    {
+      k: 'pick',
+      t: 'Passo 1 — 1FN: o grupo de repetição',
+      q: 'Quais colunas mudam a cada item da mesma nota?',
+      items: [
+        { t: 'ITEM',            ok: 1, why: 'É o número sequencial do item — muda a cada linha.' },
+        { t: 'COD_PROD',        ok: 1, why: 'Cada item tem um produto diferente.' },
+        { t: 'DESCRICAO',       ok: 1, why: 'Vem junto com o produto. Sai agora e será separada de novo na 2FN.' },
+        { t: 'UNID',            ok: 1, why: 'Unidade de medida do produto — acompanha o item.' },
+        { t: 'QUANT',           ok: 1, why: 'Quantidade daquele item.' },
+        { t: 'VL_UNIT',         ok: 1, why: 'Valor unitário cobrado naquele item.' },
+        { t: 'VL_TOTAL_ITEM',   ok: 1, why: 'É por item — e ainda por cima é calculado. Sai agora e some na 3FN.' },
+        { t: 'NR_NOTA',         ok: 0, why: 'Identifica a nota. Fica na tabela NOTA e reaparece na tabela dos itens como parte da chave.' },
+        { t: 'CNPJ_DEST',       ok: 0, why: 'O destinatário é da nota inteira, não de cada item.' },
+        { t: 'VALOR_TOTAL_NOTA',ok: 0, why: 'É da nota. Tem outro problema — é calculado — mas isso só é resolvido na 3FN.' }
+      ]
+    },
+    {
+      k: 'reveal',
+      t: 'Passo 2 — Escreva a 1FN',
+      q: 'Duas tabelas. Marque a chave composta.',
+      model: `<div class="pre">NOTA(NR_NOTA pk, DATA, HORA,
+     CNPJ_DEST, NOME_DEST, ENDERECO_DEST, CIDADE_DEST, UF_DEST,
+     PLACA_TRANSP, NOME_TRANSP,
+     BASE_CALCULO, VALOR_TOTAL_NOTA)
+ITENS_NOTA(NR_NOTA pk/fk, ITEM pk, COD_PROD, DESCRICAO, UNID,
+           QUANT, VL_UNIT, VL_TOTAL_ITEM)</div>
+        <p>Nada mais foi tocado. A 1FN só desmembra o grupo de repetição — a bagunça restante é
+        problema da 2FN e da 3FN.</p>`,
+      check: [
+        'Duas tabelas',
+        'ITENS_NOTA com chave composta NR_NOTA + ITEM',
+        'Todos os dados do destinatário ainda em NOTA',
+        'Os calculados ainda presentes'
+      ]
+    },
+    {
+      k: 'assign',
+      t: 'Passo 3 — 2FN: dependência da chave inteira',
+      q: 'A chave de ITENS_NOTA é <code>NR_NOTA + ITEM</code>. Cada atributo depende dos dois?',
+      opts: ['Depende dos dois — fica', 'Depende só de parte — sai'],
+      rows: [
+        { t: 'QUANT',          a: 0, why: 'A quantidade é daquele item daquela nota. Depende dos dois.' },
+        { t: 'VL_UNIT',        a: 0, why: 'É o valor cobrado naquela venda. Pode ser diferente do preço atual do produto — por isso fica no item.' },
+        { t: 'DESCRICAO',      a: 1, why: 'A descrição depende do produto, não da nota nem do número do item. Sai para PRODUTO.' },
+        { t: 'UNID',           a: 1, why: 'Mesma coisa: a unidade é característica do produto. Sai junto com a descrição.' },
+        { t: 'COD_PROD',       a: 0, why: 'Fica — mas vira FK. É ele que liga o item ao produto que saiu.' }
+      ]
+    },
+    {
+      k: 'reveal',
+      t: 'Passo 4 — Escreva a 2FN',
+      q: 'Três tabelas agora.',
+      model: `<div class="pre">NOTA(NR_NOTA pk, DATA, HORA,
+     CNPJ_DEST, NOME_DEST, ENDERECO_DEST, CIDADE_DEST, UF_DEST,
+     PLACA_TRANSP, NOME_TRANSP,
+     BASE_CALCULO, VALOR_TOTAL_NOTA)
+ITENS_NOTA(NR_NOTA pk/fk, ITEM pk, COD_PROD fk, QUANT, VL_UNIT,
+           VL_TOTAL_ITEM)
+PRODUTO(COD_PROD pk, DESCRICAO, UNID)</div>
+        <p>A tabela NOTA continua intocada — a 2FN só olha tabelas com <strong>chave composta</strong>,
+        e a chave de NOTA é simples. Toda aquela bagunça de destinatário e transportador é assunto da
+        3FN.</p>`,
+      check: [
+        'Três tabelas',
+        'PRODUTO com DESCRICAO e UNID',
+        'ITENS_NOTA com COD_PROD como FK',
+        'NOTA ainda sem mudanças'
+      ]
+    },
+    {
+      k: 'pick',
+      t: 'Passo 5 — 3FN: o que ainda está errado',
+      q: 'Agora olhe a tabela NOTA e o que sobrou em ITENS_NOTA. O que a 3FN ataca?',
+      items: [
+        { t: 'NOME_DEST, ENDERECO_DEST, CIDADE_DEST e UF_DEST dependem de CNPJ_DEST', ok: 1, why: 'Dependência transitiva: não-chave dependendo de outro não-chave. O destinatário é assunto próprio e vira tabela.' },
+        { t: 'NOME_TRANSP depende de PLACA_TRANSP',                                   ok: 1, why: 'Mesmo caso. TRANSPORTADOR vira tabela e a nota guarda só a placa como FK.' },
+        { t: 'VL_TOTAL_ITEM é calculado',                                             ok: 1, why: 'É QUANT × VL_UNIT. Derivado armazenado sai.' },
+        { t: 'VALOR_TOTAL_NOTA é calculado',                                          ok: 1, why: 'É a soma dos totais dos itens. Sai também.' },
+        { t: 'BASE_CALCULO é calculado',                                              ok: 1, why: 'Deriva dos valores dos itens e da regra de imposto. Sai.' },
+        { t: 'HORA deveria virar entidade',                                           ok: 0, why: 'É atributo simples da nota. Só viraria entidade se precisássemos de histórico de mudanças dela.' },
+        { t: 'ITEM deveria sair da chave',                                            ok: 0, why: 'Ele é essencial: sem ele, os vários itens da mesma nota colidiriam.' }
+      ]
+    },
+    {
+      k: 'reveal',
+      t: 'Passo 6 — Escreva a 3FN final',
+      q: 'Cinco tabelas. Esta é a resposta que a prova cobra.',
+      model: `<div class="pre">NOTA(NR_NOTA pk, DATA, HORA,
+     CNPJ_DEST fk → DESTINATARIO,
+     PLACA_TRANSP fk → TRANSPORTADOR)
+ITENS_NOTA(NR_NOTA pk/fk, ITEM pk, COD_PROD fk, QUANT, VL_UNIT)
+PRODUTO(COD_PROD pk, DESCRICAO, UNID)
+DESTINATARIO(CNPJ pk, NOME, ENDERECO, CIDADE, UF)
+TRANSPORTADOR(PLACA pk, NOME)</div>
+        <p>Compare com o Pedido de Compra: é o <strong>mesmo esqueleto</strong>. Um documento, os
+        itens dele, e uma tabela para cada assunto que aparecia repetido. Todos os campos calculados
+        — <code>VL_TOTAL_ITEM</code>, <code>VALOR_TOTAL_NOTA</code>, <code>BASE_CALCULO</code> —
+        desapareceram: eles são recalculados na hora de emitir a nota.</p>
+        <p class="serif-note">Se você reconheceu esse esqueleto sozinho, normalização deixou de ser
+        um problema para você.</p>`,
+      check: [
+        'Cinco tabelas',
+        'Nenhum campo calculado sobrou',
+        'DESTINATARIO com CNPJ como PK',
+        'TRANSPORTADOR com PLACA como PK',
+        'ITENS_NOTA manteve QUANT e VL_UNIT',
+        'NOTA ficou com apenas cinco colunas'
+      ]
+    }
+  ]
 }
 
 ];

@@ -1,5 +1,5 @@
 /* =========================================================================
-   APP — roteamento, progresso, oficina, flashcards e questões
+   APP — roteamento, progresso, diagnóstico, oficina, flashcards e questões
    ========================================================================= */
 
 (function () {
@@ -7,21 +7,23 @@
 
 /* ----------------------------------------------------------- ARMAZENAMENTO */
 
-const KEY = 'bd.progress.v2';
+const KEY = 'bd.progress.v3';
 const DAY = 86400000;
 const today = () => Math.floor(Date.now() / DAY);
 const BOX_WAIT = [0, 1, 3, 7, 16];   /* dias de espera por caixa */
+const HIST_MAX = 240;
 
-let store = { cards: {}, quiz: {}, of: {} };
+let store = { cards: {}, quiz: {}, of: {}, hist: [] };
 
 function load() {
   try {
-    const raw = localStorage.getItem(KEY);
+    const raw = localStorage.getItem(KEY) || localStorage.getItem('bd.progress.v2');
     if (raw) {
       const p = JSON.parse(raw);
       store.cards = p.cards || {};
       store.quiz  = p.quiz  || {};
       store.of    = p.of    || {};
+      store.hist  = p.hist  || [];
     }
   } catch (e) { /* primeira visita ou storage bloqueado */ }
 }
@@ -36,6 +38,22 @@ function save() {
 
 const cardRec = id => store.cards[id] || (store.cards[id] = { b: 1, d: 0, s: 0 });
 
+/* Junta o contexto e a resposta curta aos dados principais. */
+function mergeExtras() {
+  if (typeof CARDS_EXTRA === 'object') {
+    CARDS.forEach(c => {
+      const x = CARDS_EXTRA[c.id];
+      if (x) { if (x.c) c.ctx = x.c; if (x.s) c.simple = x.s; }
+    });
+  }
+  if (typeof QUIZ_EXTRA === 'object') {
+    QUESTIONS.forEach(q => {
+      const x = QUIZ_EXTRA[q.id];
+      if (x) { if (x.c) q.ctx = x.c; if (x.s) q.simple = x.s; }
+    });
+  }
+}
+
 /* ------------------------------------------------------------ UTILITÁRIOS */
 
 const $  = (s, r) => (r || document).querySelector(s);
@@ -43,6 +61,7 @@ const $$ = (s, r) => Array.prototype.slice.call((r || document).querySelectorAll
 const mod = id => MODULES.find(m => m.id === id);
 const pad = n => String(n).padStart(2, '0');
 const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+const plural = (n, s, p) => n + ' ' + (n === 1 ? s : p);
 
 function shuffle(a) {
   const r = a.slice();
@@ -64,38 +83,78 @@ function meter(pct, n, acc) {
 
 /* --------------------------------------------------------------- PROGRESSO */
 
-function moduleScore(id) {
+function modStats(id) {
   const cs = CARDS.filter(c => c.m === id);
   const qs = QUESTIONS.filter(q => q.m === id);
-  let card = 0;
-  cs.forEach(c => { const r = store.cards[c.id]; if (r) card += (r.b - 1) / 4; });
-  let quiz = 0;
-  qs.forEach(q => { const r = store.quiz[q.id]; if (r && r.last === 'r') quiz += 1; });
-  const cp = cs.length ? card / cs.length : 0;
-  const qp = qs.length ? quiz / qs.length : 0;
-  if (!cs.length) return Math.round(qp * 100);
-  if (!qs.length) return Math.round(cp * 100);
-  return Math.round((cp * 0.6 + qp * 0.4) * 100);
+
+  let cardPts = 0, stuck = 0, seenCards = 0;
+  cs.forEach(c => {
+    const r = store.cards[c.id];
+    if (!r) return;
+    seenCards++;
+    cardPts += (r.b - 1) / 4;
+    if (r.b <= 2 && r.s >= 2) stuck++;
+  });
+
+  let ans = 0, right = 0;
+  qs.forEach(q => {
+    const r = store.quiz[q.id];
+    if (r) { ans++; if (r.last === 'r') right++; }
+  });
+
+  const cp = cs.length ? cardPts / cs.length : 0;
+  const qp = qs.length ? right / qs.length : 0;
+  let score;
+  if (!cs.length)      score = Math.round(qp * 100);
+  else if (!qs.length) score = Math.round(cp * 100);
+  else                 score = Math.round((cp * 0.6 + qp * 0.4) * 100);
+
+  return { score, ans, right, wrong: ans - right,
+           acc: ans ? Math.round(right / ans * 100) : null,
+           stuck, seenCards, nCards: cs.length, nQ: qs.length };
 }
 
-function ofTotalSteps() { return OFICINA.reduce((s, c) => s + c.steps.length, 0); }
-function ofDoneSteps() {
-  let n = 0;
-  OFICINA.forEach(c => { const r = store.of[c.id]; if (r) n += Object.keys(r).length; });
-  return n;
+function ofStats() {
+  let done = 0, total = 0, weak = [];
+  OFICINA.forEach(c => {
+    total += c.steps.length;
+    const r = store.of[c.id] || {};
+    Object.keys(r).forEach(k => {
+      done++;
+      if (r[k] < 70) weak.push({ caso: c, step: parseInt(k, 10), pct: r[k] });
+    });
+  });
+  return { done, total, weak };
 }
 
 function globalStats() {
   const t = today();
   const due = CARDS.filter(c => { const r = store.cards[c.id]; return !r || r.d <= t; }).length;
   const mastered = CARDS.filter(c => { const r = store.cards[c.id]; return r && r.b >= 4; }).length;
+
   let ans = 0, right = 0;
   QUESTIONS.forEach(q => {
     const r = store.quiz[q.id];
     if (r) { ans++; if (r.last === 'r') right++; }
   });
-  const dom = Math.round(MODULES.reduce((s, m) => s + moduleScore(m.id), 0) / MODULES.length);
-  return { due, mastered, ans, right, dom, acc: ans ? Math.round(right / ans * 100) : 0 };
+
+  const recent = store.hist.slice(-20);
+  const recentAcc = recent.length >= 4
+    ? Math.round(recent.filter(h => h.ok).length / recent.length * 100) : null;
+
+  const dom = Math.round(MODULES.reduce((s, m) => s + modStats(m.id).score, 0) / MODULES.length);
+
+  /* ponto fraco: pior módulo entre os que já foram tocados */
+  let weak = null;
+  MODULES.forEach(m => {
+    const st = modStats(m.id);
+    const tocado = st.ans >= 2 || st.seenCards >= 3;
+    if (!tocado) return;
+    if (!weak || st.score < weak.score) weak = { m, score: st.score, st };
+  });
+
+  return { due, mastered, ans, right, dom, recentAcc,
+           acc: ans ? Math.round(right / ans * 100) : null, weak };
 }
 
 /* ------------------------------------------------------------ ROTEAMENTO */
@@ -109,8 +168,8 @@ function go(v) {
   window.scrollTo(0, 0);
   if (v === 'painel')    renderPainel();
   if (v === 'oficina')   renderOficina();
-  if (v === 'cards')     renderCardChips();
-  if (v === 'quiz')      renderQuizChips();
+  if (v === 'cards')     renderCardFilters();
+  if (v === 'quiz')      renderQuizFilters();
   if (v === 'diagramas') renderDiagramas();
   if (v === 'resumo')    renderResumo();
   $('#topCtx').textContent = { painel: 'Painel', oficina: 'Oficina', cards: 'Flashcards',
@@ -122,45 +181,212 @@ $('#nav').addEventListener('click', e => {
   if (b) go(b.dataset.view);
 });
 
+/* ======================================================================
+   DIAGNÓSTICO — o que estudar agora, a partir do rendimento
+   ====================================================================== */
+
+function diagnose() {
+  const recs = [];
+  const g = globalStats();
+  const ofs = ofStats();
+
+  /* 1. módulos com taxa de erro alta em questões */
+  MODULES.forEach(m => {
+    const st = modStats(m.id);
+    if (st.ans < 2) return;
+    const errRate = st.wrong / st.ans;
+    if (errRate < 0.34) return;
+    const r = RECOMMEND[m.id] || {};
+    recs.push({
+      score: 100 + st.wrong * 12 + errRate * 30,
+      k: 'Ponto fraco · §' + pad(m.id),
+      t: m.t,
+      w: `Você errou <b>${st.wrong} de ${st.ans}</b> questões deste módulo. ` +
+         (r.ref ? 'Comece pela ficha do resumo, depois refaça as questões.'
+                : 'Refaça as questões deste módulo lendo a explicação de cada uma.'),
+      act: r.ref ? { go: 'resumo', ref: r.ref } : { go: 'quiz', filter: 'm' + m.id },
+      go: '→'
+    });
+  });
+
+  /* 2. cards travados na caixa 1 ou 2 depois de duas ou mais tentativas */
+  MODULES.forEach(m => {
+    const st = modStats(m.id);
+    if (st.stuck < 3) return;
+    recs.push({
+      score: 70 + st.stuck * 8,
+      k: 'Travado · §' + pad(m.id),
+      t: m.t,
+      w: `<b>${plural(st.stuck, 'card continua preso', 'cards continuam presos')}</b> na caixa 1 ou 2 depois de várias tentativas. ` +
+         'Decorar não está funcionando aqui — vale ver o assunto de outro jeito.',
+      act: (RECOMMEND[m.id] || {}).diag
+        ? { go: 'diagramas', diag: RECOMMEND[m.id].diag }
+        : { go: 'cards', filter: 'm' + m.id },
+      go: '→'
+    });
+  });
+
+  /* 3. passos da oficina com nota baixa */
+  ofs.weak.slice(0, 3).forEach(w => {
+    recs.push({
+      score: 85 + (70 - w.pct) / 2,
+      k: 'Refazer · Oficina',
+      t: w.caso.t + ' — passo ' + (w.step + 1),
+      w: `Você fechou este passo com <b>${w.pct}%</b>. Refaça só ele: a trilha de passos ` +
+         'no topo do caso deixa você pular direto.',
+      act: { go: 'oficina', case: w.caso.id, step: w.step },
+      go: '→'
+    });
+  });
+
+  /* 4. cards vencidos */
+  if (g.due >= 10) {
+    recs.push({
+      score: 60 + Math.min(g.due, 60) / 2,
+      k: 'Revisão do dia',
+      t: plural(g.due, 'card esperando', 'cards esperando'),
+      w: 'A repetição espaçada só funciona se você fechar a fila do dia. ' +
+         'São poucos minutos e é o que mais rende.',
+      act: { go: 'cards', filter: 'due' },
+      go: '→'
+    });
+  }
+
+  /* 5. módulos ainda intocados — sugestão de próximo assunto */
+  if (recs.length < 4) {
+    const virgem = MODULES.filter(m => {
+      const st = modStats(m.id);
+      return st.ans === 0 && st.seenCards === 0;
+    });
+    if (virgem.length) {
+      const m = virgem[0];
+      const r = RECOMMEND[m.id] || {};
+      recs.push({
+        score: 40,
+        k: 'Próximo assunto · §' + pad(m.id),
+        t: m.t,
+        w: 'Você ainda não tocou neste módulo. ' +
+           (m.hot ? 'E ele é dos que mais caem.' : 'Comece pelos cards, são rápidos.'),
+        act: r.of ? { go: 'oficina', case: r.of } : { go: 'cards', filter: 'm' + m.id },
+        go: '→'
+      });
+    }
+  }
+
+  /* 6. oficina não iniciada */
+  if (ofs.done === 0) {
+    recs.push({
+      score: 55,
+      k: 'Prática guiada',
+      t: 'Comece pela Locadora Rota 9',
+      w: 'É o caso que percorre o processo inteiro — entidades, cardinalidade, DER, ' +
+         'tabelas e normalização — em dez passos.',
+      act: { go: 'oficina', case: 'of-locadora' },
+      go: '→'
+    });
+  }
+
+  /* 7. tudo em dia */
+  if (!recs.length) {
+    recs.push({
+      score: 10,
+      k: 'Nada urgente',
+      t: 'Faça um simulado de 20 questões',
+      w: 'Sem pontos fracos detectados e sem fila de revisão. Um simulado misturado ' +
+         'é o jeito mais rápido de descobrir onde o modelo está frouxo.',
+      act: { go: 'quiz', filter: 'sim' },
+      go: '→'
+    });
+  }
+
+  recs.sort((a, b) => b.score - a.score);
+  return recs.slice(0, 5);
+}
+
+let currentRecs = [];
+
+function renderRecs() {
+  currentRecs = diagnose();
+  $('#recs').innerHTML = currentRecs.map((r, i) => `
+    <button class="rec ${i === 0 ? 'rec--now' : ''}" data-rec="${i}" style="--i:${i}">
+      <span>
+        <span class="rec__k">${r.k}</span>
+        <span class="rec__t">${r.t}</span>
+        <span class="rec__w">${r.w}</span>
+      </span>
+      <span class="rec__go">${r.go}</span>
+    </button>`).join('');
+}
+
+$('#recs').addEventListener('click', e => {
+  const b = e.target.closest('.rec');
+  if (!b) return;
+  applyRec(currentRecs[parseInt(b.dataset.rec, 10)].act);
+});
+
+function applyRec(a) {
+  if (!a) return;
+  if (a.filter && a.go === 'cards') cardFilter = a.filter;
+  if (a.filter && a.go === 'quiz')  quizFilter = a.filter;
+  if (a.go === 'oficina') {
+    ofCase = null;
+    go('oficina');
+    if (a.case) { openCase(a.case, a.step); }
+    return;
+  }
+  go(a.go);
+  if (a.ref) {
+    const el = $(`.acc[data-id="${a.ref}"]`);
+    if (el) { el.classList.add('open'); el.scrollIntoView({ block: 'start' }); }
+  }
+  if (a.diag) {
+    const el = $(`.dcard[data-d="${a.diag}"]`);
+    if (el) el.scrollIntoView({ block: 'start' });
+  }
+}
+
 /* --------------------------------------------------------------- PAINEL */
 
 function renderPainel() {
   const s = globalStats();
-  const ofD = ofDoneSteps(), ofT = ofTotalSteps();
+  const ofs = ofStats();
+
   $('#topPct').textContent = s.dom + '%';
   $('#deckSize').textContent = CARDS.length + ' cards · ' + QUESTIONS.length + ' questões · '
     + OFICINA.length + ' casos guiados · ' + DIAGRAMS.length + ' diagramas';
-  $('#bandNote').textContent = s.ans
-    ? 'Acerto em questões · ' + s.acc + '% em ' + s.ans + ' respondidas'
-    : 'Nenhuma questão respondida ainda';
+  $('#bandNote').textContent = s.mastered + ' na memória · oficina ' + ofs.done + '/' + ofs.total;
   $('#actReviewSub').textContent = s.due
     ? s.due + ' cards vencidos ou inéditos'
-    : 'Tudo em dia — role para escolher um módulo';
-  $('#actOfSub').textContent = ofD
-    ? ofD + ' de ' + ofT + ' passos concluídos'
+    : 'Fila vazia — escolha um módulo';
+  $('#actOfSub').textContent = ofs.done
+    ? ofs.done + ' de ' + ofs.total + ' passos concluídos'
     : 'Enunciado → DER → tabelas → 3FN';
 
+  const wk = s.weak;
   $('#telemetry').innerHTML = `
     <div class="tel">
       <div class="tel__k">Domínio geral</div>
       <div class="tel__v">${s.dom}<small>%</small></div>
-      ${meter(s.dom, 12, true)}
+      ${meter(s.dom, 12, false)}
     </div>
     <div class="tel">
-      <div class="tel__k">Cards na memória</div>
-      <div class="tel__v">${s.mastered}<small>/${CARDS.length}</small></div>
-      <div class="tel__sub">caixa 4 ou 5</div>
+      <div class="tel__k">Rendimento recente</div>
+      <div class="tel__v">${s.recentAcc === null ? '—' : s.recentAcc + '<small>%</small>'}</div>
+      <div class="tel__sub">${s.recentAcc === null
+        ? 'responda 4 questões' : 'últimas ' + Math.min(store.hist.length, 20) + ' respostas'}</div>
     </div>
     <div class="tel ${s.due ? 'tel--sig' : ''}">
       <div class="tel__k">Revisar hoje</div>
       <div class="tel__v">${s.due}</div>
-      <div class="tel__sub">${s.due ? 'aguardando' : 'em dia'}</div>
+      <div class="tel__sub">${s.due ? 'cards na fila' : 'fila vazia'}</div>
     </div>
     <div class="tel">
-      <div class="tel__k">Oficina</div>
-      <div class="tel__v">${ofD}<small>/${ofT}</small></div>
-      <div class="tel__sub">passos concluídos</div>
+      <div class="tel__k">Ponto fraco</div>
+      <div class="tel__v">${wk ? '<em>§' + pad(wk.m.id) + '</em> ' + wk.score + '<small>%</small>' : '—'}</div>
+      <div class="tel__sub">${wk ? wk.m.t.slice(0, 28) : 'ainda sem dados'}</div>
     </div>`;
+
+  renderRecs();
 
   let h = '', part = '';
   MODULES.forEach(m => {
@@ -168,20 +394,18 @@ function renderPainel() {
       part = m.part;
       h += `<div class="partline">Parte ${m.part} — ${PARTS[m.part]}</div>`;
     }
-    const p = moduleScore(m.id);
-    const nc = CARDS.filter(c => c.m === m.id).length;
-    const nq = QUESTIONS.filter(q => q.m === m.id).length;
+    const st = modStats(m.id);
+    const detail = st.ans
+      ? `${st.right}/${st.ans} em questões`
+      : `${st.nCards} cards · ${st.nQ} questões`;
     h += `<button class="mod" data-mod="${m.id}">
       <span class="mod__no">${pad(m.id)}</span>
       <span>
         <span class="mod__t">${m.t}</span>
-        <span class="mod__tags"><span class="${m.hot ? 'hot' : ''}">${m.tags}</span> · ${nc} cards · ${nq} questões</span>
+        <span class="mod__tags">${m.hot ? '<span class="hot">' + m.tags + '</span> · ' : ''}${detail}</span>
+        <span class="mod__line"><i style="width:${st.score}%"></i></span>
       </span>
-      <span class="mod__right">
-        <span class="mod__pct">${p}%</span>
-        <span class="mod__bar">${Array.from({ length: 6 }, (_, i) =>
-          `<i class="${i < Math.round(p / 100 * 6) ? 'on' : ''}"></i>`).join('')}</span>
-      </span>
+      <span class="mod__pct ${st.score >= 60 ? 'high' : ''}">${st.score}%</span>
     </button>`;
   });
   $('#modlist').innerHTML = h;
@@ -199,27 +423,20 @@ $('#goOficina').addEventListener('click', () => { ofCase = null; go('oficina'); 
 
 $('#resetBtn').addEventListener('click', () => {
   if (!confirm('Zerar todo o progresso salvo neste aparelho?')) return;
-  store = { cards: {}, quiz: {}, of: {} };
-  try { localStorage.removeItem(KEY); } catch (e) {}
+  store = { cards: {}, quiz: {}, of: {}, hist: [] };
+  try { localStorage.removeItem(KEY); localStorage.removeItem('bd.progress.v2'); } catch (e) {}
   renderPainel();
 });
 
 /* ======================================================================
-   OFICINA — processo guiado
+   OFICINA
    ====================================================================== */
 
-let ofCase = null;   /* id do caso aberto, ou null para a lista */
-let ofStep = 0;
-let ofSel  = null;   /* seleção do passo atual */
-let ofChecked = false;
-let ofShown = false; /* passos do tipo reveal */
+let ofCase = null, ofStep = 0, ofSel = null, ofChecked = false, ofShown = false, ofLastPct = 0;
 
 function ofRec(id) { return store.of[id] || (store.of[id] = {}); }
 
-function renderOficina() {
-  if (ofCase === null) return renderOfList();
-  return renderOfStep();
-}
+function renderOficina() { return ofCase === null ? renderOfList() : renderOfStep(); }
 
 function renderOfList() {
   const t = OFICINA.map((c, i) => {
@@ -229,16 +446,15 @@ function renderOfList() {
     const scores = Object.keys(r).map(k => r[k]);
     const avg = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : null;
     return `<button class="ofcase" data-case="${c.id}" style="--i:${i}">
-      <div class="ofcase__no">${pad(c.n)}</div>
-      <div class="ofcase__main">
-        <div class="ofcase__t">${c.t}</div>
-        <div class="ofcase__s">${c.nivel} · ${c.steps.length} passos</div>
-        <div class="ofcase__tags">${c.tags}</div>
-      </div>
-      <div class="ofcase__right">
-        <div class="ofcase__pct">${pct}<small>%</small></div>
-        <div class="ofcase__sub">${avg === null ? 'não iniciado' : avg + '% de acerto'}</div>
-      </div>
+      <span class="ofcase__no">${pad(c.n)}</span>
+      <span>
+        <span class="ofcase__t">${c.t}</span>
+        <span class="ofcase__s">${c.nivel} · ${c.steps.length} passos · ${c.tags}</span>
+      </span>
+      <span class="ofcase__right">
+        <span class="ofcase__pct ${pct ? 'on' : ''}">${pct}<small>%</small></span>
+        <span class="ofcase__sub">${avg === null ? 'não iniciado' : avg + '% de acerto'}</span>
+      </span>
     </button>`;
   }).join('');
 
@@ -250,10 +466,7 @@ function renderOfList() {
     </div>
 
     <div class="band">
-      <div class="band-head">
-        <span class="idx">§ 00</span>
-        <span class="name">O caminho</span>
-      </div>
+      <div class="band-head"><span class="idx">§ 00</span><span class="name">O caminho</span></div>
       <div class="ofpath">
         <span>Enunciado</span><i>→</i><span>Entidades</span><i>→</i><span>Atributos</span><i>→</i>
         <span>Cardinalidade</span><i>→</i><span>Casos especiais</span><i>→</i><span>DER</span><i>→</i>
@@ -265,7 +478,7 @@ function renderOfList() {
       <div class="section__head">
         <span class="idx">§ 01</span>
         <h2 class="section__t">Casos</h2>
-        <span class="section__meta">Comece pelo 01</span>
+        <span class="section__meta">${OFICINA.length} casos · ${ofStats().total} passos</span>
       </div>
       <div class="oflist">${t}</div>
     </div>
@@ -273,13 +486,15 @@ function renderOfList() {
     <div class="foot"><span>Faça cada passo no papel antes de conferir. É aí que fixa.</span></div>`;
 }
 
-function openCase(id) {
-  ofCase = id; ofStep = 0;
-  const r = store.of[id];
-  if (r) {
-    const c = OFICINA.find(x => x.id === id);
-    /* retoma no primeiro passo ainda não concluído */
-    for (let i = 0; i < c.steps.length; i++) { if (r[i] === undefined) { ofStep = i; break; } }
+function openCase(id, step) {
+  ofCase = id;
+  ofStep = 0;
+  const c = OFICINA.find(x => x.id === id);
+  if (typeof step === 'number') {
+    ofStep = step;
+  } else {
+    const r = store.of[id];
+    if (r) for (let i = 0; i < c.steps.length; i++) { if (r[i] === undefined) { ofStep = i; break; } }
   }
   resetStepState();
   renderOfStep();
@@ -291,18 +506,15 @@ function resetStepState() { ofSel = null; ofChecked = false; ofShown = false; }
 function renderOfStep() {
   const c = OFICINA.find(x => x.id === ofCase);
 
-  /* tela de encerramento */
   if (ofStep >= c.steps.length) {
     const r = ofRec(c.id);
     const sc = Object.keys(r).map(k => r[k]);
     const avg = sc.length ? Math.round(sc.reduce((a, b) => a + b, 0) / sc.length) : 0;
     $('#ofRoot').innerHTML = `
-      <div class="ofbar">
-        <button class="ofback" id="ofBack">← Casos</button>
-        <span class="ofbar__t">${c.t}</span>
-      </div>
+      <div class="ofbar"><button class="ofback" id="ofBack">← Casos</button>
+        <span class="ofbar__t">${c.t}</span></div>
       <div class="result">
-        <div class="tel__k">Caso concluído</div>
+        <div class="tel__k" style="color:var(--ink-25)">Caso concluído</div>
         <div class="result__big">${avg}<small>%</small></div>
         <div class="result__msg">Você percorreu os ${c.steps.length} passos de <strong>${c.t}</strong>.
         ${avg >= 85 ? 'Esse processo está dominado — refaça daqui a uma semana só para não enferrujar.'
@@ -313,19 +525,16 @@ function renderOfStep() {
           <button class="btn" id="ofOther">Escolher outro caso</button>
         </div>
       </div>`;
-    $('#ofBack').addEventListener('click', () => { ofCase = null; renderOficina(); });
-    $('#ofOther').addEventListener('click', () => { ofCase = null; renderOficina(); });
+    $('#ofBack').addEventListener('click', backToList);
+    $('#ofOther').addEventListener('click', backToList);
     $('#ofRedo').addEventListener('click', () => {
       delete store.of[c.id]; save(); ofStep = 0; resetStepState(); renderOfStep(); window.scrollTo(0, 0);
     });
-    renderPainel();
     return;
   }
 
   const st = c.steps[ofStep];
   const r  = store.of[c.id] || {};
-
-  /* trilha de passos */
   const track = c.steps.map((s, i) =>
     `<button class="ofdot ${i === ofStep ? 'now' : ''} ${r[i] !== undefined ? 'done' : ''}"
        data-step="${i}" title="${esc(s.t)}">${i + 1}</button>`).join('');
@@ -341,21 +550,18 @@ function renderOfStep() {
       <span class="ofbar__t">${c.t}</span>
       <span class="ofbar__n">${ofStep + 1} / ${c.steps.length}</span>
     </div>
-
     <details class="ofenun" ${ofStep === 0 ? 'open' : ''}>
-      <summary><span class="idx">Enunciado</span><span>${c.nivel}</span></summary>
+      <summary><span>Enunciado</span><span>${c.nivel}</span></summary>
       <div class="ofenun__b prose">${c.enunciado}</div>
     </details>
-
     <div class="oftrack">${track}</div>
-
     <div class="ofstep">
-      <div class="ofstep__k"><span class="idx">Passo ${ofStep + 1}</span> ${st.t.replace(/^Passo \d+ — /, '')}</div>
+      <div class="ofstep__k"><span>Passo ${ofStep + 1}</span> ${st.t.replace(/^Passo \d+ — /, '')}</div>
       <div class="ofstep__q">${st.q}</div>
       ${body}
     </div>`;
 
-  $('#ofBack').addEventListener('click', () => { ofCase = null; renderOficina(); });
+  $('#ofBack').addEventListener('click', backToList);
   $$('.ofdot').forEach(d => d.addEventListener('click', () => {
     ofStep = parseInt(d.dataset.step, 10); resetStepState(); renderOfStep(); window.scrollTo(0, 0);
   }));
@@ -365,7 +571,7 @@ function renderOfStep() {
   if (st.k === 'reveal') wireReveal(st);
 }
 
-/* ---------- pick ---------- */
+function backToList() { ofCase = null; renderOficina(); window.scrollTo(0, 0); }
 
 function ofPickHtml(st) {
   if (ofSel === null) ofSel = {};
@@ -389,8 +595,7 @@ function ofPickHtml(st) {
 
 function wirePick(st) {
   $$('.ofitem').forEach(b => b.addEventListener('click', () => {
-    const i = b.dataset.i;
-    ofSel[i] = !ofSel[i];
+    ofSel[b.dataset.i] = !ofSel[b.dataset.i];
     renderOfStep();
   }));
   wireFoot(() => {
@@ -400,8 +605,6 @@ function wirePick(st) {
   });
 }
 
-/* ---------- assign ---------- */
-
 function ofAssignHtml(st) {
   if (ofSel === null) ofSel = {};
   const rows = st.rows.map((row, i) => {
@@ -409,17 +612,13 @@ function ofAssignHtml(st) {
     const right = ofChecked && chosen === row.a;
     const opts = st.opts.map((o, j) => {
       let cls = chosen === j ? 'on' : '';
-      if (ofChecked) {
-        if (j === row.a) cls = 'ok';
-        else if (chosen === j) cls = 'bad';
-        else cls = 'off';
-      }
+      if (ofChecked) cls = (j === row.a) ? 'ok' : (chosen === j ? 'bad' : 'off');
       return `<button class="ofopt ${cls}" data-r="${i}" data-o="${j}" ${ofChecked ? 'disabled' : ''}>${o}</button>`;
     }).join('');
     return `<div class="ofrow ${ofChecked ? (right ? 'is-ok' : 'is-bad') : ''}" style="--i:${i}">
         <div class="ofrow__t">${row.t}</div>
         <div class="ofrow__o">${opts}</div>
-        ${ofChecked ? `<div class="ofrow__w"><b>${right ? 'Certo' : 'Resposta: ' + st.opts[row.a]}</b> ${row.why}</div>` : ''}
+        ${ofChecked ? `<div class="ofrow__w"><b>${right ? 'Certo' : 'Resposta: ' + st.opts[row.a]}</b>${row.why}</div>` : ''}
       </div>`;
   }).join('');
   return `<div class="ofrows">${rows}</div>${ofFootHtml('Conferir respostas')}`;
@@ -437,8 +636,6 @@ function wireAssign(st) {
   }, () => Object.keys(ofSel).length >= st.rows.length);
 }
 
-/* ---------- reveal ---------- */
-
 function ofRevealHtml(st) {
   if (!ofShown) {
     return `<div class="ofpaper">
@@ -448,8 +645,8 @@ function ofRevealHtml(st) {
       </div>
       <div class="btnrow"><button class="btn btn--solid btn--wide" id="ofShow">Já fiz — mostrar gabarito</button></div>`;
   }
-  const fig = st.svg ? `<div class="dframe dframe--svg" style="margin-bottom:18px">${SVGS[st.svg]()}</div>`
-    : st.img ? `<div class="dframe" data-img="${st.img}" style="margin-bottom:18px">
+  const fig = st.svg ? `<div class="dframe dframe--svg" style="margin-bottom:20px">${SVGS[st.svg]()}</div>`
+    : st.img ? `<div class="dframe" data-img="${st.img}" style="margin-bottom:20px">
                   <img src="assets/img/${st.img}" alt="Gabarito" loading="lazy">
                   <span class="dframe__zoom">Ampliar</span></div>` : '';
   const check = (st.check || []).map((c, i) =>
@@ -475,8 +672,6 @@ function wireReveal(st) {
   }));
 }
 
-/* ---------- rodapé comum dos passos ---------- */
-
 function ofFootHtml(label) {
   if (!ofChecked)
     return `<div class="btnrow"><button class="btn btn--solid btn--wide" id="ofCheck">${label}</button></div>`;
@@ -491,8 +686,6 @@ function ofFootHtml(label) {
       <button class="btn btn--solid" id="ofNext">Próximo passo →</button>
     </div>`;
 }
-
-let ofLastPct = 0;
 
 function wireFoot(scoreFn, guardFn) {
   const chk = $('#ofCheck');
@@ -526,6 +719,23 @@ $('#ofRoot').addEventListener('click', e => {
 });
 
 /* ======================================================================
+   FILTROS — chips fixos + seletor de módulo
+   ====================================================================== */
+
+function filtersHtml(chips, current, counts) {
+  let h = chips.map(c =>
+    `<button class="chip" data-f="${c.f}" aria-pressed="${current === c.f}">${c.t}<b>${counts[c.f]}</b></button>`
+  ).join('');
+  const inMod = current.charAt(0) === 'm';
+  h += `<select class="msel" id="${chips.sel || 'modSel'}">
+      <option value="">${inMod ? 'Módulo §' + pad(parseInt(current.slice(1), 10)) : 'Por módulo…'}</option>`;
+  MODULES.forEach(m => {
+    h += `<option value="m${m.id}" ${current === 'm' + m.id ? 'selected' : ''}>§${pad(m.id)} · ${m.t}</option>`;
+  });
+  return h + '</select>';
+}
+
+/* ======================================================================
    FLASHCARDS
    ====================================================================== */
 
@@ -542,16 +752,11 @@ function cardPool(f) {
   return CARDS.slice();
 }
 
-function renderCardChips() {
-  const nDue = cardPool('due').length, nHard = cardPool('hard').length;
-  let h = `<button class="chip" data-f="due"  aria-pressed="${cardFilter === 'due'}">Hoje <b>${nDue}</b></button>
-           <button class="chip" data-f="all"  aria-pressed="${cardFilter === 'all'}">Tudo <b>${CARDS.length}</b></button>
-           <button class="chip" data-f="hard" aria-pressed="${cardFilter === 'hard'}">Difíceis <b>${nHard}</b></button>`;
-  MODULES.forEach(m => {
-    const n = CARDS.filter(c => c.m === m.id).length;
-    h += `<button class="chip" data-f="m${m.id}" aria-pressed="${cardFilter === 'm' + m.id}">§${pad(m.id)} <b>${n}</b></button>`;
-  });
-  $('#cardChips').innerHTML = h;
+function renderCardFilters() {
+  const counts = { due: cardPool('due').length, all: CARDS.length, hard: cardPool('hard').length };
+  $('#cardChips').innerHTML = filtersHtml(
+    [{ f: 'due', t: 'Hoje' }, { f: 'all', t: 'Tudo' }, { f: 'hard', t: 'Difíceis' }],
+    cardFilter, counts);
   buildQueue();
 }
 
@@ -559,7 +764,12 @@ $('#cardChips').addEventListener('click', e => {
   const c = e.target.closest('.chip');
   if (!c) return;
   cardFilter = c.dataset.f;
-  renderCardChips();
+  renderCardFilters();
+});
+$('#cardChips').addEventListener('change', e => {
+  if (e.target.tagName !== 'SELECT' || !e.target.value) return;
+  cardFilter = e.target.value;
+  renderCardFilters();
 });
 
 function buildQueue() {
@@ -576,7 +786,7 @@ function drawCard() {
     const done = sess.right + sess.mid + sess.wrong;
     stage.innerHTML = done
       ? `<div class="result">
-           <div class="tel__k">Sessão concluída</div>
+           <div class="tel__k" style="color:var(--ink-25)">Sessão concluída</div>
            <div class="result__big">${done}<small>cards</small></div>
            <div class="result__msg"><strong>${sess.right}</strong> você sabia ·
              <strong>${sess.mid}</strong> quase · <strong>${sess.wrong}</strong> errou.
@@ -591,10 +801,9 @@ function drawCard() {
     strip.innerHTML = '';
     $('#cardHint').textContent = '';
     const ag = $('#againBtn');
-    if (ag) ag.addEventListener('click', () => { if (!done) cardFilter = 'all'; renderCardChips(); });
+    if (ag) ag.addEventListener('click', () => { if (!done) cardFilter = 'all'; renderCardFilters(); });
     const tq = $('#toQuiz');
     if (tq) tq.addEventListener('click', () => go('quiz'));
-    renderPainel();
     return;
   }
 
@@ -610,9 +819,11 @@ function drawCard() {
         <span class="nm">${m.t}</span>
         <span class="box">${boxes}</span>
       </div>
+      ${c.ctx ? `<div class="fcard__ctx">${c.ctx}</div>` : ''}
       <div class="fcard__body">
         <div class="fcard__q">${c.q}</div>
         ${(!revealed && c.hint) ? `<div class="fcard__hint">Pista · ${c.hint}</div>` : ''}
+        ${revealed && c.simple ? `<div class="fcard__simple"><span>Em uma frase</span>${c.simple}</div>` : ''}
         ${revealed ? `<div class="fcard__a">${c.a}</div>` : ''}
       </div>
       ${revealed
@@ -697,16 +908,13 @@ function quizPool(f) {
   return QUESTIONS.slice();
 }
 
-function renderQuizChips() {
-  let h = `<button class="chip" data-f="sim"   aria-pressed="${quizFilter === 'sim'}">Simulado <b>20</b></button>
-           <button class="chip" data-f="wrong" aria-pressed="${quizFilter === 'wrong'}">Errei <b>${quizPool('wrong').length}</b></button>
-           <button class="chip" data-f="new"   aria-pressed="${quizFilter === 'new'}">Inéditas <b>${quizPool('new').length}</b></button>
-           <button class="chip" data-f="fig"   aria-pressed="${quizFilter === 'fig'}">Com diagrama <b>${quizPool('fig').length}</b></button>`;
-  MODULES.forEach(m => {
-    const n = QUESTIONS.filter(q => q.m === m.id).length;
-    h += `<button class="chip" data-f="m${m.id}" aria-pressed="${quizFilter === 'm' + m.id}">§${pad(m.id)} <b>${n}</b></button>`;
-  });
-  $('#quizChips').innerHTML = h;
+function renderQuizFilters() {
+  const counts = { sim: 20, wrong: quizPool('wrong').length,
+                   new: quizPool('new').length, fig: quizPool('fig').length };
+  $('#quizChips').innerHTML = filtersHtml(
+    [{ f: 'sim', t: 'Simulado' }, { f: 'wrong', t: 'Errei' },
+     { f: 'new', t: 'Inéditas' }, { f: 'fig', t: 'Com diagrama' }],
+    quizFilter, counts);
   startQuiz();
 }
 
@@ -714,7 +922,12 @@ $('#quizChips').addEventListener('click', e => {
   const c = e.target.closest('.chip');
   if (!c) return;
   quizFilter = c.dataset.f;
-  renderQuizChips();
+  renderQuizFilters();
+});
+$('#quizChips').addEventListener('change', e => {
+  if (e.target.tagName !== 'SELECT' || !e.target.value) return;
+  quizFilter = e.target.value;
+  renderQuizFilters();
 });
 
 function startQuiz() {
@@ -736,23 +949,24 @@ function drawQuiz() {
               :             'Ainda cru. Leia o resumo do assunto e faça os cards antes de tentar de novo.';
     const rows = qsess.log.map((l, i) => {
       const q = QUESTIONS.find(x => x.id === l.id);
-      return `<div class="result__row" style="--i:${i}">
+      return `<div class="result__row ${l.ok ? '' : 'bad'}" style="--i:${i}">
                 <span class="mk ${l.ok ? 'y' : 'n'}">${l.ok ? '✓' : '✕'}</span>
                 <span>${q.q}</span></div>`;
     }).join('');
     st.innerHTML = `<div class="result">
-        <div class="tel__k">Resultado</div>
+        <div class="tel__k" style="color:var(--ink-25)">Resultado</div>
         <div class="result__big">${pct}<small>%</small></div>
         <div class="result__msg">${ok} de ${n} corretas. ${msg}</div>
         <div class="btnrow btnrow--split">
           <button class="btn btn--solid" id="qAgain">Refazer</button>
           <button class="btn" id="qWrong">Só as que errei</button>
+          <button class="btn" id="qPainel">Ver o que estudar</button>
         </div>
         <div class="result__list">${rows}</div>
       </div>`;
     $('#qAgain').addEventListener('click', startQuiz);
-    $('#qWrong').addEventListener('click', () => { quizFilter = 'wrong'; renderQuizChips(); });
-    renderPainel();
+    $('#qWrong').addEventListener('click', () => { quizFilter = 'wrong'; renderQuizFilters(); });
+    $('#qPainel').addEventListener('click', () => go('painel'));
     return;
   }
 
@@ -767,15 +981,22 @@ function drawQuiz() {
               <span class="opt__k">${'ABCD'.charAt(i)}</span><span>${o}</span></button>`;
   }).join('');
 
+  const acertou = qsess.picked === q.c;
+
   st.innerHTML = `
     <div class="quiz__head">
-      <span class="ix">§${pad(m.id)}</span><span>${m.t}</span>
+      <span>§${pad(m.id)}</span><span>${m.t}</span>
       <span class="quiz__score">${qsess.i + 1}<b>/</b>${qsess.ids.length} · acertos <b>${ok}</b></span>
     </div>
+    ${q.ctx ? `<div class="quiz__ctx"><b>Situação</b>${q.ctx}</div>` : ''}
     <h2 class="quiz__q">${q.q}</h2>
     ${q.img ? `<div class="quiz__fig" data-img="${q.img}"><img src="assets/img/${q.img}" alt="Diagrama da questão" loading="lazy"><span class="dframe__zoom">Ampliar</span></div>` : ''}
     <div class="opts">${opts}</div>
-    ${done ? `<div class="explain"><b class="tag">${qsess.picked === q.c ? 'Correto' : 'Resposta certa: ' + 'ABCD'.charAt(q.c)}</b>${q.e}</div>
+    ${done ? `<div class="explain">
+                <div class="explain__v ${acertou ? 'y' : 'n'}">${acertou ? 'Você acertou' : 'Resposta certa: ' + 'ABCD'.charAt(q.c)}</div>
+                ${q.simple ? `<div class="explain__s">${q.simple}</div>` : ''}
+                <div class="explain__d">${q.e}</div>
+              </div>
               <div class="btnrow"><button class="btn btn--solid btn--wide" id="qNext">
                 ${qsess.i + 1 >= qsess.ids.length ? 'Ver resultado' : 'Próxima questão →'}</button></div>` : ''}`;
 
@@ -792,9 +1013,14 @@ function pick(i) {
   const ok = i === q.c;
   qsess.picked = i;
   qsess.log.push({ id: q.id, ok: ok });
+
   const r = store.quiz[q.id] || (store.quiz[q.id] = { r: 0, w: 0, last: null });
   if (ok) r.r++; else r.w++;
   r.last = ok ? 'r' : 'w';
+
+  store.hist.push({ d: today(), m: q.m, ok: ok ? 1 : 0 });
+  if (store.hist.length > HIST_MAX) store.hist = store.hist.slice(-HIST_MAX);
+
   save();
   drawQuiz();
 }
@@ -814,7 +1040,7 @@ function renderDiagramas() {
   };
   const labels = { todos: 'Todos', aula: 'Das aulas', guia: 'Do guia', autoral: 'Autorais' };
   $('#dChips').innerHTML = ['todos', 'aula', 'guia', 'autoral'].map(k =>
-    `<button class="chip" data-f="${k}" aria-pressed="${dFilter === k}">${labels[k]} <b>${counts[k]}</b></button>`).join('');
+    `<button class="chip" data-f="${k}" aria-pressed="${dFilter === k}">${labels[k]}<b>${counts[k]}</b></button>`).join('');
 
   const list = DIAGRAMS.filter(d => dFilter === 'todos' || d.src === dFilter);
   const srcLabel = { aula: 'Diagrama da aula', guia: 'Figura do guia', autoral: 'Feito para este sistema' };
@@ -826,7 +1052,7 @@ function renderDiagramas() {
       : `<div class="dframe" data-img="${d.img}" data-t="${esc(d.t)}">
            <img src="assets/img/${d.img}" alt="${esc(d.t)}" loading="lazy">
            <span class="dframe__zoom">Ampliar</span></div>`;
-    return `<article class="dcard">
+    return `<article class="dcard" data-d="${d.id}">
       <div class="dcard__head">
         <span class="idx">FIG ${pad(i + 1)}</span>
         <h3 class="dcard__t">${d.t}</h3>
@@ -911,7 +1137,7 @@ $('#themeBtn').addEventListener('click', () => {
   document.documentElement.setAttribute('data-theme', nx);
   try { localStorage.setItem('bd.theme', nx); } catch (e) {}
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute('content', nx === 'dark' ? '#101010' : '#E8E4D9');
+  if (meta) meta.setAttribute('content', nx === 'dark' ? '#121211' : '#F2F0EA');
 });
 
 document.addEventListener('keydown', e => {
@@ -921,6 +1147,7 @@ document.addEventListener('keydown', e => {
     if (e.key === '-') zoom(-0.6);
     return;
   }
+  if (e.target.tagName === 'SELECT') return;
   if (view === 'cards') {
     if (e.key === ' ' || e.key === 'Enter') {
       e.preventDefault();
@@ -941,15 +1168,12 @@ document.addEventListener('keydown', e => {
 
 /* ---------------------------------------------------------------- BOOT */
 
+mergeExtras();
 load();
 renderPainel();
 
-/* Offline: só faz sentido quando servido por http/https (GitHub Pages ou
-   servidor local). Aberto direto do disco, o navegador recusa o registro. */
 if ('serviceWorker' in navigator && location.protocol.indexOf('http') === 0) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
-  });
+  window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(() => {}); });
 }
 
 })();
