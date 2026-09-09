@@ -1148,6 +1148,11 @@ $('#themeBtn').addEventListener('click', () => {
 });
 
 document.addEventListener('keydown', e => {
+  /* Com a portaria aberta o aplicativo está fora de cena, mas este ouvinte
+     continua no document. Sem esta linha, digitar uma senha que contenha
+     1, 2 ou 3 avaliaria cards invisíveis por trás da folha de entrada. */
+  if (!$('#porta').hidden) return;
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
   if ($('#lightbox').classList.contains('on')) {
     if (e.key === 'Escape') closeLb();
     if (e.key === '+' || e.key === '=') zoom(0.6);

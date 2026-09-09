@@ -1289,6 +1289,11 @@ img { max-width: 100%; }
   animation-delay: calc(var(--i) * 40ms);
 }
 .sqitem:hover { background: var(--paper-sunk); }
+/* Sendo ímpar o número de consultas, a última ocupa a linha inteira —
+   senão sobra meia célula de fio à direita, que lê como erro. */
+@media (min-width: 720px) {
+  .sqitem:last-child:nth-child(odd) { grid-column: 1 / -1; }
+}
 .sqitem__k {
   font-family: var(--mono); font-size: 9px; letter-spacing: .14em;
   text-transform: uppercase; color: var(--signal);
