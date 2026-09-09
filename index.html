@@ -22,7 +22,12 @@
 </head>
 <body>
 
-<div class="frame">
+<!-- ═══════════════════════════ PORTARIA ════════════════════════════
+     Folha de entrada. Fica visível até o banco abrir e o usuário se
+     identificar; o conteúdo é desenhado por js/auth.js.              -->
+<div class="porta" id="porta" hidden></div>
+
+<div class="frame" hidden>
 
   <!-- ══════════════════════════ TRILHO ══════════════════════════ -->
   <aside class="rail">
@@ -58,6 +63,10 @@
         <svg class="nav__glyph" viewBox="0 0 18 18"><line x1="2" y1="4" x2="16" y2="4"/><line x1="2" y1="9" x2="16" y2="9"/><line x1="2" y1="14" x2="11" y2="14"/></svg>
         <span class="nav__label">Resumo</span>
       </button>
+      <button class="nav__item" data-view="banco" title="Banco do seu progresso">
+        <svg class="nav__glyph" viewBox="0 0 18 18"><ellipse cx="9" cy="4.4" rx="6" ry="2.4"/><path d="M3 4.4 v9.2 c0 1.33 2.69 2.4 6 2.4 s6 -1.07 6 -2.4 V4.4"/><path d="M3 9 c0 1.33 2.69 2.4 6 2.4 s6 -1.07 6 -2.4"/></svg>
+        <span class="nav__label">Banco</span>
+      </button>
     </nav>
 
     <div class="rail-spacer"></div>
@@ -73,6 +82,7 @@
       <div class="topbar__id">BD<b>·</b>I <span id="topCtx">Painel</span></div>
       <div class="topbar__spacer"></div>
       <div class="topbar__stat">Domínio <b id="topPct">0%</b></div>
+      <div class="topbar__eu" id="quemSou"></div>
       <button class="invert" id="themeBtn" title="Inverter papel e tinta" aria-label="Inverter tema"></button>
     </header>
 
@@ -81,7 +91,7 @@
       <div class="masthead">
         <div class="masthead__kicker"><b>Banco de Dados I</b> <span id="deckSize"></span></div>
         <h1 class="masthead__title">Estudar<em>na mão.</em></h1>
-        <p class="masthead__lead">Feito para caber num trajeto de metrô: um card por vez, uma questão por vez, e uma oficina que leva você do enunciado até a 3FN. O progresso fica salvo neste aparelho.</p>
+        <p class="masthead__lead">Um card por vez, uma questão por vez, e uma oficina que leva você do enunciado até a 3FN. Cada resposta é gravada no seu banco SQLite — você volta exatamente de onde parou, e pode consultar o próprio progresso na tela <b>Banco</b>.</p>
       </div>
 
       <div class="band">
@@ -139,8 +149,9 @@
       </div>
 
       <div class="foot">
-        <span>Conteúdo do guia de estudos da disciplina</span>
+        <span>Conteúdo do guia de estudos e das aulas 01 a 06</span>
         <button id="resetBtn">Zerar progresso</button>
+        <button id="sairBtn">Sair</button>
       </div>
     </section>
 
@@ -189,6 +200,11 @@
       <div class="foot"><span>Use antes da prova, não durante</span></div>
     </section>
 
+    <!-- ========================== BANCO =========================== -->
+    <section class="view" id="view-banco">
+      <div id="bancoRoot"></div>
+    </section>
+
   </div>
 </div>
 
@@ -202,13 +218,21 @@
   <div class="lightbox__stage" id="lbStage"></div>
 </div>
 
+<!-- SQLite compilado para WebAssembly. Fica no repositório em vez de vir
+     de um CDN para que a página continue funcionando offline.          -->
+<script src="assets/vendor/sql-wasm.js"></script>
+
 <script src="js/data-core.js"></script>
 <script src="js/data-cards.js"></script>
 <script src="js/data-quiz.js"></script>
 <script src="js/extra-cards.js"></script>
 <script src="js/extra-quiz.js"></script>
 <script src="js/data-oficina.js"></script>
+<script src="js/aula06.js"></script>
+<script src="js/aula06-estudo.js"></script>
 <script src="js/diagrams.js"></script>
+<script src="js/db.js"></script>
 <script src="js/app.js"></script>
+<script src="js/auth.js"></script>
 </body>
 </html>

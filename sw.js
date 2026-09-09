@@ -2,7 +2,7 @@
    Estratégia: rede primeiro, cache como reserva. Assim o conteúdo nunca
    fica preso numa versão velha, mas continua disponível offline.        */
 
-const CACHE = 'bd-estudo-v1';
+const CACHE = 'bd-estudo-v2';
 
 const ASSETS = [
   './',
@@ -11,9 +11,19 @@ const ASSETS = [
   './js/data-core.js',
   './js/data-cards.js',
   './js/data-quiz.js',
+  './js/extra-cards.js',
+  './js/extra-quiz.js',
   './js/data-oficina.js',
+  './js/aula06.js',
+  './js/aula06-estudo.js',
   './js/diagrams.js',
-  './js/app.js'
+  './js/db.js',
+  './js/app.js',
+  './js/auth.js',
+  /* O motor do SQLite precisa estar no cache, senão o login não abre
+     offline — e sem login não há progresso para ler.                  */
+  './assets/vendor/sql-wasm.js',
+  './assets/vendor/sql-wasm.wasm'
 ];
 
 self.addEventListener('install', e => {

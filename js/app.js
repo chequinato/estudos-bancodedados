@@ -5,35 +5,32 @@
 (function () {
 'use strict';
 
-/* ----------------------------------------------------------- ARMAZENAMENTO */
+/* ----------------------------------------------------------- ARMAZENAMENTO
 
-const KEY = 'bd.progress.v3';
+   O progresso mora no SQLite (js/db.js). Aqui fica só a cópia em memória,
+   que é o que as telas leem a cada quadro. Toda alteração passa por
+   save(), que traduz essa cópia de volta para as tabelas do banco.      */
+
 const DAY = 86400000;
 const today = () => Math.floor(Date.now() / DAY);
 const BOX_WAIT = [0, 1, 3, 7, 16];   /* dias de espera por caixa */
 const HIST_MAX = 240;
 
 let store = { cards: {}, quiz: {}, of: {}, hist: [] };
+let usuario = null;
 
 function load() {
-  try {
-    const raw = localStorage.getItem(KEY) || localStorage.getItem('bd.progress.v2');
-    if (raw) {
-      const p = JSON.parse(raw);
-      store.cards = p.cards || {};
-      store.quiz  = p.quiz  || {};
-      store.of    = p.of    || {};
-      store.hist  = p.hist  || [];
-    }
-  } catch (e) { /* primeira visita ou storage bloqueado */ }
+  const p = DB.carregarProgresso();
+  store.cards = p.cards;
+  store.quiz  = p.quiz;
+  store.of    = p.of;
+  store.hist  = p.hist;
 }
 
 let saveTimer = null;
 function save() {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    try { localStorage.setItem(KEY, JSON.stringify(store)); } catch (e) {}
-  }, 120);
+  saveTimer = setTimeout(() => DB.salvarProgresso(store), 160);
 }
 
 const cardRec = id => store.cards[id] || (store.cards[id] = { b: 1, d: 0, s: 0 });
@@ -172,8 +169,9 @@ function go(v) {
   if (v === 'quiz')      renderQuizFilters();
   if (v === 'diagramas') renderDiagramas();
   if (v === 'resumo')    renderResumo();
+  if (v === 'banco')     renderBanco();
   $('#topCtx').textContent = { painel: 'Painel', oficina: 'Oficina', cards: 'Flashcards',
-    quiz: 'Questões', diagramas: 'Diagramas', resumo: 'Resumo' }[v];
+    quiz: 'Questões', diagramas: 'Diagramas', resumo: 'Resumo', banco: 'Banco' }[v];
 }
 
 $('#nav').addEventListener('click', e => {
@@ -422,10 +420,16 @@ $('#goReview').addEventListener('click', () => { cardFilter = 'due'; go('cards')
 $('#goOficina').addEventListener('click', () => { ofCase = null; go('oficina'); });
 
 $('#resetBtn').addEventListener('click', () => {
-  if (!confirm('Zerar todo o progresso salvo neste aparelho?')) return;
+  if (!confirm('Apagar todo o seu progresso do banco? As linhas de card_estado, ' +
+               'questao_estado, oficina_passo e evento deste usuário serão excluídas.')) return;
+  DB.zerarProgresso();
   store = { cards: {}, quiz: {}, of: {}, hist: [] };
-  try { localStorage.removeItem(KEY); localStorage.removeItem('bd.progress.v2'); } catch (e) {}
   renderPainel();
+});
+
+$('#sairBtn').addEventListener('click', () => {
+  DB.persistir(true);
+  BDPortaria.sair();
 });
 
 /* ======================================================================
@@ -709,6 +713,7 @@ function saveStep(pct) {
   const r = ofRec(ofCase);
   r[ofStep] = Math.max(r[ofStep] || 0, pct);
   save();
+  DB.registrarEvento('oficina', ofCase + '#' + (ofStep + 1), null, pct >= 70);
 }
 
 function nextStep() { ofStep++; resetStepState(); renderOfStep(); window.scrollTo(0, 0); }
@@ -862,6 +867,7 @@ function rate(v) {
   if (v === 2) { r.b = Math.min(5, r.b + 1); sess.right++; }
   r.d = today() + BOX_WAIT[r.b - 1];
   save();
+  DB.registrarEvento('card', c.id, c.m, v === 2);
 
   const el = $('#fcard');
   if (el) el.classList.add(v === 0 ? 'out-l' : 'out-r');
@@ -1022,6 +1028,7 @@ function pick(i) {
   if (store.hist.length > HIST_MAX) store.hist = store.hist.slice(-HIST_MAX);
 
   save();
+  DB.registrarEvento('questao', q.id, q.m, ok);
   drawQuiz();
 }
 
@@ -1166,14 +1173,325 @@ document.addEventListener('keydown', e => {
   }
 });
 
-/* ---------------------------------------------------------------- BOOT */
+/* ======================================================================
+   BANCO — o esquema onde o seu progresso está guardado, aberto para
+   consulta. É a única tela que não ensina a matéria pelo conteúdo, e sim
+   pelo próprio funcionamento: um banco relacional pequeno, real, com os
+   seus dados dentro, para praticar SELECT sem precisar instalar nada.
+   ====================================================================== */
 
-mergeExtras();
-load();
-renderPainel();
+/* Consultas prontas. Cada uma existe para mostrar um recurso diferente
+   da linguagem, na ordem em que a disciplina os apresenta.             */
+const CONSULTAS = [
+  {
+    id: 'sq-modulo',
+    t: 'Rendimento por módulo',
+    k: 'JOIN + GROUP BY',
+    d: 'Junta o log de respostas ao catálogo de módulos e agrupa. É a consulta que alimenta o Painel.',
+    sql:
+`SELECT  m.id_modulo                                   AS mod,
+        m.nome                                        AS assunto,
+        COUNT(*)                                      AS respondidas,
+        SUM(e.acertou)                                AS acertos,
+        ROUND(100.0 * SUM(e.acertou) / COUNT(*), 1)   AS pct
+FROM        evento e
+INNER JOIN  modulo m ON m.id_modulo = e.id_modulo
+WHERE   e.tipo = 'questao'
+GROUP BY    m.id_modulo, m.nome
+ORDER BY    pct ASC;`
+  },
+  {
+    id: 'sq-dia',
+    t: 'Quanto você estudou por dia',
+    k: 'GROUP BY em data',
+    d: 'Uma linha por dia, contando respostas e acertos. Mostra a regularidade — que rende mais que maratona.',
+    sql:
+`SELECT  dia,
+        COUNT(*)                                     AS respostas,
+        SUM(acertou)                                 AS acertos,
+        ROUND(100.0 * SUM(acertou) / COUNT(*), 1)    AS pct
+FROM    evento
+WHERE   acertou IS NOT NULL
+GROUP BY dia
+ORDER BY dia DESC
+LIMIT 30;`
+  },
+  {
+    id: 'sq-caixas',
+    t: 'Cards em cada caixa',
+    k: 'GROUP BY + COUNT',
+    d: 'A distribuição da repetição espaçada. Caixa 1 é o que você ainda erra; caixa 5 é o que já está na memória.',
+    sql:
+`SELECT  caixa,
+        COUNT(*)        AS cards,
+        SUM(tentativas) AS tentativas_somadas
+FROM    card_estado
+GROUP BY caixa
+ORDER BY caixa;`
+  },
+  {
+    id: 'sq-teimosos',
+    t: 'Os cards que teimam em não entrar',
+    k: 'WHERE com duas condições',
+    d: 'Caixa baixa depois de várias tentativas. Decorar não está funcionando neles — troque de método.',
+    sql:
+`SELECT  id_card,
+        caixa,
+        tentativas
+FROM    card_estado
+WHERE   caixa <= 2
+  AND   tentativas >= 3
+ORDER BY tentativas DESC, id_card;`
+  },
+  {
+    id: 'sq-oficina',
+    t: 'Oficina: melhor nota por caso',
+    k: 'AVG, MIN, MAX',
+    d: 'As funções de agregação em cima da tabela de chave tripla. Note o passo de pior nota em cada caso.',
+    sql:
+`SELECT  id_caso,
+        COUNT(*)              AS passos_feitos,
+        ROUND(AVG(melhor_nota), 1) AS media,
+        MIN(melhor_nota)      AS pior_passo,
+        MAX(melhor_nota)      AS melhor_passo
+FROM    oficina_passo
+GROUP BY id_caso
+ORDER BY media ASC;`
+  },
+  {
+    id: 'sq-nunca',
+    t: 'Módulos em que você nunca respondeu nada',
+    k: 'LEFT JOIN + IS NULL',
+    d: 'O jeito clássico de perguntar "o que existe de um lado e não existe do outro". Cai em prova.',
+    sql:
+`SELECT  m.id_modulo AS mod,
+        m.nome      AS assunto,
+        m.etiqueta
+FROM        modulo m
+LEFT JOIN   evento e ON e.id_modulo = m.id_modulo AND e.tipo = 'questao'
+WHERE       e.id_evento IS NULL
+ORDER BY    m.id_modulo;`
+  },
+  {
+    id: 'sq-ultimas',
+    t: 'Suas últimas 25 respostas',
+    k: 'ORDER BY + LIMIT',
+    d: 'O log cru, do mais recente para o mais antigo. Cada linha é um evento que nunca é reescrito.',
+    sql:
+`SELECT  substr(momento, 12, 5) AS hora,
+        dia,
+        tipo,
+        referencia,
+        CASE acertou WHEN 1 THEN 'acertou'
+                     WHEN 0 THEN 'errou'
+                     ELSE '—' END AS resultado
+FROM    evento
+ORDER BY id_evento DESC
+LIMIT 25;`
+  }
+];
 
-if ('serviceWorker' in navigator && location.protocol.indexOf('http') === 0) {
-  window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(() => {}); });
+let sqlAtual = CONSULTAS[0].sql;
+let sqlErro = null;
+
+function renderBanco() {
+  const u = DB.usuarioAtual() || { nome: '—', login: '—', criado_em: null };
+  const conta = n => { try { return DB.uma('SELECT COUNT(*) AS n FROM ' + n).n; } catch (e) { return 0; } };
+  const nEventos = conta('evento');
+  const nCards   = conta('card_estado');
+  const nQuest   = conta('questao_estado');
+  const nPassos  = conta('oficina_passo');
+
+  const dias = DB.linhas('SELECT COUNT(DISTINCT dia) AS n FROM evento');
+  const nDias = dias.length ? dias[0].n : 0;
+  const bytes = DB.tamanho();
+
+  $('#bancoRoot').innerHTML = `
+    <div class="masthead">
+      <div class="masthead__kicker"><b>Banco</b> <span>o seu progresso, em SQL</span></div>
+      <h1 class="masthead__title" style="font-size:clamp(34px,10vw,64px)">Consulte<em>a si mesmo.</em></h1>
+      <p class="masthead__lead">Tudo o que você responde nesta página é gravado num banco SQLite que
+      roda dentro do navegador — o mesmo motor relacional que a disciplina descreve, compilado para
+      WebAssembly. Aqui está o esquema inteiro, aberto, com os seus dados dentro. Rode as consultas,
+      mude as consultas, quebre as consultas.</p>
+    </div>
+
+    <div class="band">
+      <div class="band-sweep"></div>
+      <div class="band-head">
+        <span class="idx">§ 00</span>
+        <span class="name">Estado do arquivo</span>
+        <span class="note">progresso.db · IndexedDB deste computador</span>
+      </div>
+      <div class="band-grid">
+        <div class="tel">
+          <div class="tel__k">Linhas em evento</div>
+          <div class="tel__v">${nEventos}</div>
+          <div class="tel__sub">${nDias ? 'em ' + plural(nDias, 'dia distinto', 'dias distintos') : 'nenhum dia ainda'}</div>
+        </div>
+        <div class="tel">
+          <div class="tel__k">Estado guardado</div>
+          <div class="tel__v">${nCards + nQuest + nPassos}</div>
+          <div class="tel__sub">${nCards} cards · ${nQuest} questões · ${nPassos} passos</div>
+        </div>
+        <div class="tel">
+          <div class="tel__k">Tamanho</div>
+          <div class="tel__v">${bytes < 1048576 ? Math.round(bytes / 1024) : (bytes / 1048576).toFixed(1)}<small>${bytes < 1048576 ? 'KB' : 'MB'}</small></div>
+          <div class="tel__sub">7 tabelas · 3 índices</div>
+        </div>
+        <div class="tel">
+          <div class="tel__k">Usuário</div>
+          <div class="tel__v" style="font-size:clamp(20px,4vw,30px)">${esc(u.nome)}</div>
+          <div class="tel__sub">${u.criado_em ? 'desde ' + new Date(u.criado_em).toLocaleDateString('pt-BR') : '—'}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section__head">
+        <span class="idx">§ 01</span>
+        <h2 class="section__t">Consultas prontas</h2>
+        <span class="section__meta">clique para carregar no console</span>
+      </div>
+      <div class="sqlist">
+        ${CONSULTAS.map((c, i) => `
+          <button class="sqitem" data-sq="${c.id}" style="--i:${i}">
+            <span class="sqitem__k">${c.k}</span>
+            <span class="sqitem__t">${c.t}</span>
+            <span class="sqitem__d">${c.d}</span>
+          </button>`).join('')}
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section__head">
+        <span class="idx">§ 02</span>
+        <h2 class="section__t">Console</h2>
+        <span class="section__meta">somente leitura</span>
+      </div>
+      <div class="console">
+        <textarea class="console__in" id="sqlIn" spellcheck="false" rows="10">${esc(sqlAtual)}</textarea>
+        <div class="console__bar">
+          <button class="btn btn--solid" id="sqlRun">Executar <i>⏎</i></button>
+          <span class="console__hint">Ctrl + Enter</span>
+        </div>
+        <div id="sqlOut"></div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section__head">
+        <span class="idx">§ 03</span>
+        <h2 class="section__t">O esquema</h2>
+        <span class="section__meta">o DDL exato que criou este banco</span>
+      </div>
+      <p class="serif-note" style="padding-top:16px">Leia como exercício: toda tabela tem chave
+      primária; onde é o par que identifica a linha, a chave é composta; nenhuma coluna guarda o que
+      já pode ser deduzido de outra. É a 3FN aplicada a um caso pequeno e verdadeiro.</p>
+      <div class="pre pre--ddl">${esc(DB.DDL)}</div>
+    </div>
+
+    <div class="foot">
+      <span>O arquivo abre no DB Browser for SQLite, no DBeaver ou no sqlite3</span>
+      <button id="sqlBaixar">Baixar progresso.db</button>
+    </div>`;
+
+  $$('.sqitem').forEach(b => b.addEventListener('click', () => {
+    const c = CONSULTAS.find(x => x.id === b.dataset.sq);
+    sqlAtual = c.sql;
+    sqlErro = null;
+    $('#sqlIn').value = c.sql;
+    rodarSql();
+    $('#sqlOut').scrollIntoView({ block: 'nearest' });
+  }));
+
+  $('#sqlRun').addEventListener('click', rodarSql);
+  $('#sqlBaixar').addEventListener('click', () => DB.baixarArquivo());
+  $('#sqlIn').addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); rodarSql(); }
+  });
+
+  rodarSql();
 }
+
+/* O console é de leitura. Deixar um DELETE passar aqui seria uma forma
+   criativa de perder o progresso no meio da revisão.                    */
+const PROIBIDO = /\b(insert|update|delete|drop|alter|create|replace|attach|detach|vacuum|pragma|begin|commit|rollback)\b/i;
+
+function rodarSql() {
+  const campo = $('#sqlIn');
+  if (!campo) return;
+  sqlAtual = campo.value;
+  const alvo = $('#sqlOut');
+
+  if (PROIBIDO.test(sqlAtual)) {
+    alvo.innerHTML = `<div class="console__erro">
+      <b>Recusado</b>Este console só executa consultas de leitura. Para escrever no banco,
+      baixe o arquivo e abra num cliente SQLite.</div>`;
+    return;
+  }
+
+  let r;
+  try {
+    r = DB.consultar(sqlAtual);
+  } catch (e) {
+    alvo.innerHTML = `<div class="console__erro"><b>Erro de SQL</b>${esc(e.message || String(e))}</div>`;
+    return;
+  }
+
+  if (r.vazio || !r.values.length) {
+    alvo.innerHTML = `<div class="console__vazio">A consulta rodou e não devolveu nenhuma linha.
+      ${nadaAinda() ? 'Ainda não há dados: responda alguns cards ou questões e volte aqui.' : ''}</div>`;
+    return;
+  }
+
+  const cab = r.columns.map(c => `<th>${esc(c)}</th>`).join('');
+  const corpo = r.values.map((linha, i) =>
+    `<tr style="--i:${Math.min(i, 24)}">${linha.map(v =>
+      `<td>${v === null ? '<i class="nulo">NULL</i>' : esc(v)}</td>`).join('')}</tr>`).join('');
+
+  alvo.innerHTML = `
+    <div class="console__meta">${plural(r.values.length, 'linha', 'linhas')} ·
+      ${plural(r.columns.length, 'coluna', 'colunas')}</div>
+    <div class="tabwrap"><table class="tab"><thead><tr>${cab}</tr></thead><tbody>${corpo}</tbody></table></div>`;
+}
+
+function nadaAinda() {
+  try { return DB.uma('SELECT COUNT(*) AS n FROM evento').n === 0; } catch (e) { return true; }
+}
+
+/* ---------------------------------------------------------------- BOOT
+
+   O aplicativo não arranca sozinho: quem manda é a portaria (js/auth.js),
+   depois de abrir o banco e identificar quem chegou.                     */
+
+function iniciar(u, importados) {
+  usuario = u;
+  mergeExtras();
+  DB.sincronizarModulos(MODULES, PARTS);
+  load();
+
+  $('#quemSou').textContent = u.nome;
+  go('painel');
+
+  if (importados) {
+    setTimeout(() => alert('Bem-vindo, ' + u.nome + '.\n\n' + importados +
+      ' registros de progresso que estavam guardados neste navegador foram importados ' +
+      'para o seu usuário no banco.'), 400);
+  }
+
+  if ('serviceWorker' in navigator && location.protocol.indexOf('http') === 0) {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
+}
+
+/* Fechar a aba no meio de uma sessão não pode custar as últimas respostas. */
+window.addEventListener('beforeunload', () => {
+  clearTimeout(saveTimer);
+  DB.salvarProgresso(store);
+  DB.persistir(true);
+});
+
+window.BDApp = { iniciar: iniciar };
 
 })();
