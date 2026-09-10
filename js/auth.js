@@ -14,17 +14,27 @@ const $ = s => document.querySelector(s);
 const porta   = $('#porta');
 const armacao = $('.frame');
 
-let modo = 'entrar';   /* entrar | criar */
-let recado = null;     /* mensagem de erro ou aviso da ultima tentativa */
+let modo = 'entrar';   /* o que o usuario escolheu: entrar | criar        */
+let criando = false;   /* o que vale de fato, ja contando o primeiro acesso */
+let recado = null;     /* mensagem de erro ou aviso da ultima tentativa   */
 
 /* ------------------------------------------------------------- DESENHO */
 
 function desenhar(estado) {
-  const contas = (estado === 'pronto') ? DB.listarUsuarios() : [];
-  const primeiraVez = contas.length === 0;
-  if (primeiraVez && modo === 'entrar') modo = 'criar';
-
   const carregando = estado !== 'pronto';
+  const contas = carregando ? [] : DB.listarUsuarios();
+
+  /* Enquanto o banco está abrindo, a lista de contas está vazia porque
+     ainda não foi lida — e não porque não existam contas. Só depois de
+     'pronto' é que a ausência de contas significa alguma coisa. Decidir
+     antes disso deixava a folha presa em "criar usuário" para sempre. */
+  const primeiraVez = !carregando && contas.length === 0;
+
+  /* Sem nenhuma conta só existe um caminho, e ele não é escolha do
+     usuário: criar a primeira. Nos demais casos vale o que ele escolheu.
+     Fica no escopo do módulo porque o envio do formulário precisa decidir
+     do mesmo jeito que o desenho decidiu. */
+  criando = primeiraVez || modo === 'criar';
 
   porta.innerHTML = `
     <div class="porta__marca porta__marca--tl"></div>
@@ -99,7 +109,6 @@ function porteiroCarregando(estado) {
 }
 
 function porteiroForm(contas, primeiraVez) {
-  const criando = modo === 'criar';
   const sugestoes = contas.map(c =>
     `<button type="button" class="porta__conta" data-login="${c.login}">
        <span class="porta__contan">${c.nome}</span>
@@ -183,7 +192,7 @@ function dataCurta(iso) {
 function ligarForm(contas) {
   const troca = $('#portaTroca');
   if (troca) troca.addEventListener('click', () => {
-    modo = (modo === 'criar') ? 'entrar' : 'criar';
+    modo = criando ? 'entrar' : 'criar';
     recado = null;
     desenhar('pronto');
     const f = $('#fLogin');
@@ -211,7 +220,7 @@ function ligarForm(contas) {
       const lembrar = $('#fLembrar').checked;
       let r;
 
-      if (modo === 'criar') {
+      if (criando) {
         if (senha !== $('#fSenha2').value) {
           recado = 'As duas senhas não são iguais.';
           desenhar('pronto');
