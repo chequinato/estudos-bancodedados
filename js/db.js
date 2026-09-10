@@ -205,6 +205,32 @@ const DDL = [
 '  FOREIGN KEY (id_usuario) REFERENCES usuario (id_usuario)',
 ');',
 '',
+'/* Uma linha por simulado iniciado, no formato da prova do professor.',
+'   Guarda a tentativa inteira, nao a resposta solta — e por isso que da',
+'   para perguntar "minha nota esta subindo?" em vez de so "acertei?". */',
+'CREATE TABLE IF NOT EXISTS prova_tentativa (',
+'  id_tentativa INTEGER PRIMARY KEY AUTOINCREMENT,',
+'  id_usuario   INTEGER NOT NULL,',
+'  iniciada_em  TEXT    NOT NULL,',
+'  concluida_em TEXT,',
+'  pontos       REAL,',
+'  total        REAL,',
+'  FOREIGN KEY (id_usuario) REFERENCES usuario (id_usuario)',
+');',
+'',
+'/* Cada questao respondida dentro de uma tentativa. A chave e o par',
+'   tentativa+questao: a mesma questao aparece em varios simulados. */',
+'CREATE TABLE IF NOT EXISTS prova_resposta (',
+'  id_tentativa INTEGER NOT NULL,',
+'  id_questao   TEXT    NOT NULL,',
+'  escolha      INTEGER,',
+'  acertou      INTEGER NOT NULL DEFAULT 0,',
+'  itens_certos INTEGER,',
+'  itens_total  INTEGER,',
+'  PRIMARY KEY (id_tentativa, id_questao),',
+'  FOREIGN KEY (id_tentativa) REFERENCES prova_tentativa (id_tentativa)',
+');',
+'',
 '/* Os 17 modulos da disciplina. Tabela de dominio: nao guarda progresso,',
 '   guarda o catalogo. Existe para que as consultas da tela "Banco" possam',
 '   fazer JOIN e mostrar o nome do assunto em vez do numero cru. */',
@@ -448,12 +474,50 @@ function registrarEvento(tipo, referencia, idModulo, acertou) {
   persistir();
 }
 
+/* ----------------------------------------------------------------- PROVA */
+
+function abrirTentativa() {
+  if (!atual || !db) return null;
+  db.run('INSERT INTO prova_tentativa (id_usuario, iniciada_em) VALUES (?,?)', [atual.id, agora()]);
+  const r = uma('SELECT last_insert_rowid() AS id');
+  persistir();
+  return r ? r.id : null;
+}
+
+function gravarRespostaProva(idTentativa, idQuestao, escolha, acertou, itensCertos, itensTotal) {
+  if (!atual || !db || !idTentativa) return;
+  db.run('INSERT INTO prova_resposta (id_tentativa, id_questao, escolha, acertou, itens_certos, itens_total) ' +
+         'VALUES (?,?,?,?,?,?) ON CONFLICT (id_tentativa, id_questao) DO UPDATE SET ' +
+         'escolha = excluded.escolha, acertou = excluded.acertou, ' +
+         'itens_certos = excluded.itens_certos, itens_total = excluded.itens_total',
+         [idTentativa, idQuestao, escolha, acertou ? 1 : 0, itensCertos, itensTotal]);
+  persistir();
+}
+
+function fecharTentativa(idTentativa, pontos, total) {
+  if (!atual || !db || !idTentativa) return;
+  db.run('UPDATE prova_tentativa SET concluida_em = ?, pontos = ?, total = ? WHERE id_tentativa = ?',
+         [agora(), pontos, total, idTentativa]);
+  persistir(true);
+}
+
+/* Só as tentativas que o usuário levou até o fim entram no histórico —
+   simulado abandonado no meio não é nota. */
+function historicoProvas(limite) {
+  if (!atual || !db) return [];
+  return linhas('SELECT id_tentativa, concluida_em, pontos, total FROM prova_tentativa ' +
+                'WHERE id_usuario = ? AND concluida_em IS NOT NULL ' +
+                'ORDER BY id_tentativa DESC LIMIT ?', [atual.id, limite || 10]);
+}
+
 function zerarProgresso() {
   if (!atual || !db) return;
   const u = atual.id;
   db.run('BEGIN');
   try {
-    ['card_estado', 'questao_estado', 'oficina_passo', 'evento']
+    db.run('DELETE FROM prova_resposta WHERE id_tentativa IN ' +
+           '(SELECT id_tentativa FROM prova_tentativa WHERE id_usuario = ?)', [u]);
+    ['prova_tentativa', 'card_estado', 'questao_estado', 'oficina_passo', 'evento']
       .forEach(t => db.run('DELETE FROM ' + t + ' WHERE id_usuario = ?', [u]));
     db.run('COMMIT');
   } catch (e) {
@@ -521,6 +585,7 @@ return {
   boot, DDL,
   listarUsuarios, criarUsuario, autenticar, retomarSessao, lembrar, esquecer, sair, usuarioAtual,
   carregarProgresso, salvarProgresso, registrarEvento, zerarProgresso, sincronizarModulos,
+  abrirTentativa, gravarRespostaProva, fecharTentativa, historicoProvas,
   importarLocalStorage, consultar, linhas, uma, baixarArquivo, tamanho, persistir
 };
 

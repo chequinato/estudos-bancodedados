@@ -176,7 +176,7 @@ img { max-width: 100%; }
 }
 .rail-mark, .rail-word, .rail-spacer, .rail-foot { display: none; }
 
-.nav { display: grid; grid-template-columns: repeat(7, 1fr); flex: 1; }
+.nav { display: grid; grid-template-columns: repeat(8, 1fr); flex: 1; }
 .nav__item {
   padding: 10px 1px 11px;
   display: flex; flex-direction: column; align-items: center; gap: 5px;
@@ -1273,6 +1273,154 @@ img { max-width: 100%; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 12ch;
 }
 @media (min-width: 620px) { .topbar__eu { max-width: 20ch; } }
+
+/* ══════════════════════════════════════════════════════════════════════
+   PROVA — cenário, artefato, quatro itens, alternativas combinadas
+
+   A questão é longa por natureza, então a tela é uma coluna só, com o
+   ritmo marcado por fios: cenário · artefato · itens · alternativas.
+   ══════════════════════════════════════════════════════════════════════ */
+
+.pvbar {
+  display: flex; align-items: center; gap: 14px;
+  padding: 18px 0 14px; border-bottom: 1px solid var(--rule);
+  position: sticky; top: 48px; background: var(--paper); z-index: 30;
+}
+.pvbar__t {
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--ink-45); flex: 1;
+}
+.pvbar__n {
+  font-family: var(--mono); font-size: 10px; letter-spacing: .06em;
+  color: var(--ink); font-variant-numeric: tabular-nums;
+}
+
+/* Trilha de questões: um traço por questão, tingido pelo resultado. */
+.pvtrack { display: flex; gap: 3px; margin: 14px 0 26px; }
+.pvtrack i {
+  flex: 1; height: 3px; background: var(--rule);
+  transition: background var(--t1) var(--e-out);
+}
+.pvtrack i.now { background: var(--ink); }
+.pvtrack i.ok  { background: var(--verde); }
+.pvtrack i.bad { background: var(--signal); }
+
+.pvhead { border-bottom: 2px solid var(--rule-hard); padding-bottom: 16px; margin-bottom: 22px; }
+.pvhead__t {
+  font-size: clamp(24px, 5vw, 34px); font-weight: 800; letter-spacing: -.04em;
+  margin: 8px 0 6px; line-height: 1.05;
+  animation: cut-up var(--t2) var(--e-out) both;
+}
+.pvhead__m {
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--ink-25);
+}
+
+.pvcen { font-size: 15px; line-height: 1.65; }
+.pvcen p { margin: 0 0 12px; }
+.pvcen ul { margin: 0 0 12px; padding-left: 20px; }
+.pvcen li { margin-bottom: 7px; line-height: 1.6; }
+.pvcen strong { font-weight: 700; color: var(--ink); }
+
+/* Artefato: o que a questão manda analisar. */
+.pvart { margin: 26px 0; }
+.pvart__k {
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: .13em;
+  text-transform: uppercase; color: var(--ink-45);
+  padding-bottom: 9px; border-bottom: 1px solid var(--rule); margin-bottom: 16px;
+}
+.pvart__rev { color: var(--signal); letter-spacing: .1em; }
+.pvart .pre { margin: 0; }
+.pvart .pre u { text-decoration: underline; text-underline-offset: 3px; font-weight: 600; }
+
+.tab--dados td { white-space: nowrap; font-size: 11px; }
+.tab--dados td:first-child { font-weight: 500; }
+
+/* Itens numerados */
+.pvitens__k, .pvalts__k {
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: .13em;
+  text-transform: uppercase; color: var(--ink-45);
+  margin: 32px 0 14px; padding-bottom: 9px; border-bottom: 1px solid var(--rule);
+}
+.pvitens { display: grid; gap: 1px; background: var(--rule-soft); }
+
+.pvitem {
+  background: var(--paper); display: flex; gap: 14px; padding: 16px 4px 18px 0;
+  animation: wipe-right var(--t2) var(--e-out) both;
+  animation-delay: calc(var(--i) * 60ms);
+}
+.pvitem__n {
+  font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--ink-25);
+  width: 34px; flex: none; text-align: right; padding-top: 1px;
+}
+.pvitem__c { min-width: 0; }
+.pvitem__t { font-size: 14.5px; line-height: 1.55; color: var(--ink); }
+.pvitem__v {
+  display: inline-block; margin-top: 10px;
+  font-family: var(--mono); font-size: 9px; letter-spacing: .14em;
+  text-transform: uppercase; font-weight: 500;
+  padding: 3px 8px; border: 1px solid currentColor;
+}
+.pvitem__w {
+  margin-top: 10px; font-size: 13.5px; line-height: 1.6; color: var(--ink-70);
+}
+.pvitem__w code {
+  font-family: var(--mono); font-size: .87em; background: var(--paper-deep);
+  padding: 1px 5px; color: var(--ink);
+}
+.pvitem__w strong { color: var(--ink); font-weight: 700; }
+.pvitem.is-v .pvitem__n { color: var(--verde); }
+.pvitem.is-v .pvitem__v { color: var(--verde); }
+.pvitem.is-f .pvitem__n { color: var(--signal); }
+.pvitem.is-f .pvitem__v { color: var(--signal); }
+
+/* Aviso sobre questão com gabarito discutível */
+.pvprob {
+  border-left: 2px solid var(--amber); background: var(--paper-sunk);
+  padding: 14px 16px; margin: 0 0 16px; font-size: 13.5px; line-height: 1.6;
+  color: var(--ink-70);
+}
+.pvprob b.tag {
+  display: block; font-family: var(--mono); font-size: 9.5px; letter-spacing: .14em;
+  text-transform: uppercase; color: var(--amber); margin-bottom: 8px; font-weight: 500;
+}
+.pvprob p { margin: 0 0 10px; }
+.pvprob p:last-child { margin: 0; }
+.pvprob strong { color: var(--ink); font-weight: 700; }
+
+/* Histórico de simulados */
+.pvhist { margin-top: 20px; border-top: 1px solid var(--rule); }
+.pvhist__l {
+  display: grid; grid-template-columns: 1fr 2fr auto; gap: 16px; align-items: center;
+  padding: 13px 0; border-bottom: 1px solid var(--rule-soft);
+  animation: wipe-right var(--t2) var(--e-out) both;
+  animation-delay: calc(var(--i) * 40ms);
+}
+.pvhist__d {
+  font-family: var(--mono); font-size: 10px; letter-spacing: .05em; color: var(--ink-45);
+}
+.pvhist__b { height: 3px; background: var(--rule); position: relative; }
+.pvhist__b i {
+  position: absolute; inset: 0 auto 0 0; background: var(--ink);
+  transform-origin: left; animation: grow-x var(--t3) var(--e-out) both;
+}
+.pvhist__n {
+  font-family: var(--display); font-weight: 800; font-size: 17px;
+  font-variant-numeric: tabular-nums; letter-spacing: -.03em; color: var(--ink-45);
+}
+.pvhist__n.ok { color: var(--ink); }
+.pvhist__n small { font-size: .62em; font-weight: 500; color: var(--ink-25); }
+
+/* Para onde voltar depois do resultado */
+.pvfracos { margin-top: 30px; padding-top: 20px; border-top: 1px solid var(--rule); }
+.pvfraco {
+  display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 12px 0; border-bottom: 1px solid var(--rule-soft);
+  font-size: 14px; font-weight: 600; text-align: left; color: var(--ink);
+  transition: padding var(--t1) var(--e-out);
+}
+.pvfraco i { font-style: normal; color: var(--signal); }
+.pvfraco:hover { padding-left: 8px; }
 
 /* ══════════════════════════════════════════════════════════════════════
    BANCO — consultas prontas, console e resultado

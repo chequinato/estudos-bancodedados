@@ -54,6 +54,8 @@ esquema com as suas próprias respostas dentro dele.
 | `card_estado` | caixa e data de revisão de cada flashcard | composta: usuário + card |
 | `questao_estado` | acertos e erros por questão | composta: usuário + questão |
 | `oficina_passo` | melhor nota de cada passo de cada caso | tripla: usuário + caso + passo |
+| `prova_tentativa` | um simulado inteiro, com a nota final | `id_tentativa` |
+| `prova_resposta` | cada questão respondida dentro de uma tentativa | composta: tentativa + questão |
 | `evento` | log de respostas, uma linha por resposta | `id_evento` |
 | `preferencia` | ajustes por usuário, em chave/valor | composta: usuário + chave |
 
@@ -88,6 +90,8 @@ js/extra-quiz.js        cenário e explicação simples das questões
 js/data-oficina.js      8 casos guiados, do enunciado à 3FN
 js/aula06.js            os 3 estudos de caso da aula 06 e seus diagramas
 js/aula06-estudo.js     flashcards e questões conceituais da matéria
+js/prova.js             questões no formato da prova do professor
+js/prova-svg.js         os DERs dessas questões, em SVG
 js/diagrams.js          diagramas autorais em SVG
 js/db.js                o banco SQLite: esquema, login e persistência
 js/app.js               roteamento, progresso e os motores de estudo
@@ -97,11 +101,12 @@ assets/vendor/          sql.js — SQLite compilado para WebAssembly
 sw.js                   cache para uso offline
 ```
 
-## As sete telas
+## As oito telas
 
 | Tela | Para quê |
 | --- | --- |
 | **Painel** | Indicadores de rendimento e a seção **O que estudar agora**, que lê seus erros e aponta o próximo passo |
+| **Prova** | Simulado no formato do professor: cenário, modelo para analisar, quatro itens numerados e alternativas que os combinam |
 | **Oficina** | 11 casos, o processo inteiro passo a passo: entidades → atributos → cardinalidade → casos especiais → DER → Modelo Relacional → 1FN/2FN/3FN |
 | **Cards** | Repetição espaçada em 5 caixas, para memorizar listas e definições |
 | **Questões** | Múltipla escolha com explicação em toda resposta, filtros por módulo e "só as que errei" |

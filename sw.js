@@ -2,7 +2,7 @@
    Estratégia: rede primeiro, cache como reserva. Assim o conteúdo nunca
    fica preso numa versão velha, mas continua disponível offline.        */
 
-const CACHE = 'bd-estudo-v2';
+const CACHE = 'bd-estudo-v3';
 
 const ASSETS = [
   './',
@@ -16,6 +16,8 @@ const ASSETS = [
   './js/data-oficina.js',
   './js/aula06.js',
   './js/aula06-estudo.js',
+  './js/prova.js',
+  './js/prova-svg.js',
   './js/diagrams.js',
   './js/db.js',
   './js/app.js',

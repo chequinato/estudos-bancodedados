@@ -169,9 +169,10 @@ function go(v) {
   if (v === 'quiz')      renderQuizFilters();
   if (v === 'diagramas') renderDiagramas();
   if (v === 'resumo')    renderResumo();
+  if (v === 'prova')     renderProva();
   if (v === 'banco')     renderBanco();
   $('#topCtx').textContent = { painel: 'Painel', oficina: 'Oficina', cards: 'Flashcards',
-    quiz: 'Questões', diagramas: 'Diagramas', resumo: 'Resumo', banco: 'Banco' }[v];
+    quiz: 'Questões', diagramas: 'Diagramas', resumo: 'Resumo', prova: 'Prova', banco: 'Banco' }[v];
 }
 
 $('#nav').addEventListener('click', e => {
@@ -1177,6 +1178,325 @@ document.addEventListener('keydown', e => {
     }
   }
 });
+
+/* ======================================================================
+   PROVA — simulado no formato do professor
+
+   Cenário, artefato, quatro itens numerados e alternativas que combinam
+   os itens. A correção mostra o veredito de CADA item, porque neste
+   formato se perde a questão inteira por causa de um único item mal
+   lido — e saber qual deles derrubou você é o que ensina.
+   ====================================================================== */
+
+let pvSess = null;   /* { ids, i, escolha, log, tentativa } */
+
+function pvPool(quantas) {
+  /* As do professor vêm primeiro e sempre; as autorais completam o
+     simulado, embaralhadas, para a repetição não ficar previsível. */
+  const prof = PROVA.filter(q => q.origem === 'professor');
+  const meus = shuffle(PROVA.filter(q => q.origem !== 'professor'));
+  return prof.concat(meus).slice(0, quantas);
+}
+
+function renderProva() {
+  return pvSess ? drawProva() : renderProvaCapa();
+}
+
+function renderProvaCapa() {
+  const hist = DB.historicoProvas(8);
+  const melhor = hist.reduce((m, h) => Math.max(m, h.pontos || 0), 0);
+  const ultima = hist.length ? hist[0] : null;
+  const nProf = PROVA.filter(q => q.origem === 'professor').length;
+
+  const linhas = hist.map((h, i) => {
+    const d = new Date(h.concluida_em);
+    const pct = h.total ? Math.round(h.pontos / h.total * 100) : 0;
+    return `<div class="pvhist__l" style="--i:${i}">
+        <span class="pvhist__d">${isNaN(d) ? '—' : d.toLocaleDateString('pt-BR') + ' · ' +
+          d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>
+        <span class="pvhist__b"><i style="width:${pct}%"></i></span>
+        <span class="pvhist__n ${pct >= 60 ? 'ok' : ''}">${(h.pontos || 0).toString().replace('.', ',')}<small>/${h.total}</small></span>
+      </div>`;
+  }).join('');
+
+  $('#provaRoot').innerHTML = `
+    <div class="masthead">
+      <div class="masthead__kicker"><b>Prova</b> <span>simulado no formato do professor</span></div>
+      <h1 class="masthead__title" style="font-size:clamp(34px,10vw,64px)">Quatro itens<em>uma escolha.</em></h1>
+      <p class="masthead__lead">O formato da prova não é múltipla escolha comum: cada questão traz um
+      cenário, um modelo para analisar e <strong>quatro afirmações numeradas</strong>. As alternativas
+      combinam os itens — "I e III", "II e IV" —, então basta ler mal <em>um</em> deles para perder os
+      2 pontos inteiros. Aqui a correção mostra o veredito de cada item separadamente.</p>
+    </div>
+
+    <div class="band">
+      <div class="band-sweep"></div>
+      <div class="band-head">
+        <span class="idx">§ 00</span>
+        <span class="name">Seu desempenho</span>
+        <span class="note">${PROVA.length} questões no banco · ${nProf} são do professor</span>
+      </div>
+      <div class="band-grid">
+        <div class="tel">
+          <div class="tel__k">Melhor nota</div>
+          <div class="tel__v">${melhor ? melhor.toString().replace('.', ',') : '—'}<small>${melhor ? '/10' : ''}</small></div>
+          ${melhor ? meter(melhor * 10, 10, false) : '<div class="tel__sub">sem simulado ainda</div>'}
+        </div>
+        <div class="tel">
+          <div class="tel__k">Última</div>
+          <div class="tel__v">${ultima ? (ultima.pontos || 0).toString().replace('.', ',') + '<small>/10</small>' : '—'}</div>
+          <div class="tel__sub">${ultima ? new Date(ultima.concluida_em).toLocaleDateString('pt-BR') : 'nunca fez'}</div>
+        </div>
+        <div class="tel">
+          <div class="tel__k">Simulados feitos</div>
+          <div class="tel__v">${pad(hist.length)}</div>
+          <div class="tel__sub">${hist.length >= 3 ? 'já dá para ver tendência' : 'faça pelo menos três'}</div>
+        </div>
+        <div class="tel ${melhor >= 6 ? '' : 'tel--sig'}">
+          <div class="tel__k">Para passar</div>
+          <div class="tel__v">6<small>,0</small></div>
+          <div class="tel__sub">${melhor >= 6 ? 'você já bateu' : 'ainda não bateu'}</div>
+        </div>
+      </div>
+      <div class="band-act">
+        <button class="act act--primary" id="pvStart5">
+          <div class="act__k">Do jeito da prova</div>
+          <div class="act__t">Simulado de 5 questões</div>
+          <div class="act__s">2 pontos cada · vale 10 · sem consulta</div>
+        </button>
+        <button class="act" id="pvStartAll">
+          <div class="act__k">Treino longo</div>
+          <div class="act__t">Todas as ${PROVA.length} questões</div>
+          <div class="act__s">para varrer o formato inteiro</div>
+        </button>
+      </div>
+    </div>
+
+    ${hist.length ? `
+    <div class="section">
+      <div class="section__head">
+        <span class="idx">§ 01</span>
+        <h2 class="section__t">Histórico</h2>
+        <span class="section__meta">últimos ${hist.length}</span>
+      </div>
+      <div class="pvhist">${linhas}</div>
+    </div>` : ''}
+
+    <div class="section">
+      <div class="section__head">
+        <span class="idx">§ ${hist.length ? '02' : '01'}</span>
+        <h2 class="section__t">Como se resolve esse formato</h2>
+      </div>
+      <div class="prose" style="padding-top:18px">
+        <p class="serif-note" style="margin-bottom:18px">Julgue os quatro itens antes de olhar as
+        alternativas. Quem lê as alternativas primeiro procura a que parece familiar, e é assim que
+        se erra.</p>
+        <p><strong>1. Marque cada item como V ou F, um de cada vez.</strong> Não tente adivinhar a
+        combinação. Dois itens que você tenha certeza já costumam eliminar três alternativas.</p>
+        <p><strong>2. Repare no recorte.</strong> Itens que começam com "analisando somente…" mandam
+        ignorar o resto do enunciado — é comum um item dizer que o modelo está errado e outro dizer
+        que a transformação está certa, e os dois estarem corretos.</p>
+        <p><strong>3. Desconfie de absolutos.</strong> "Sempre", "obrigatoriamente", "sem nenhuma
+        consequência" e "não pode" costumam marcar o item falso, porque em modelagem quase tudo é
+        troca.</p>
+        <p><strong>4. Item meio certo é item errado.</strong> Uma afirmação que acerta a cardinalidade
+        e erra a consequência é falsa inteira.</p>
+        <p><strong>5. Leia as chaves antes do texto.</strong> FK fora da chave é 1:N; duas FKs
+        formando a chave é N:N; chave do dono dentro da chave é entidade fraca. Metade dos itens se
+        responde só com isso.</p>
+      </div>
+    </div>
+
+    <div class="foot"><span>As cinco do professor entram em todo simulado; as demais são autorais, no mesmo formato</span></div>`;
+
+  $('#pvStart5').addEventListener('click', () => iniciarProva(5));
+  $('#pvStartAll').addEventListener('click', () => iniciarProva(PROVA.length));
+}
+
+function iniciarProva(quantas) {
+  pvSess = {
+    ids: pvPool(quantas).map(q => q.id),
+    i: 0,
+    escolha: null,
+    log: [],
+    tentativa: DB.abrirTentativa()
+  };
+  drawProva();
+  window.scrollTo(0, 0);
+}
+
+function drawProva() {
+  const raiz = $('#provaRoot');
+
+  /* ---------------------------------------------------- resultado final */
+  if (pvSess.i >= pvSess.ids.length) {
+    const total = pvSess.log.reduce((s, l) => s + l.vale, 0);
+    const pontos = pvSess.log.reduce((s, l) => s + (l.ok ? l.vale : 0), 0);
+    const pct = Math.round(pontos / total * 100);
+    DB.fecharTentativa(pvSess.tentativa, pontos, total);
+
+    const msg = pct >= 85 ? 'Está pronto para esse formato. Refaça daqui a alguns dias só para não enferrujar.'
+              : pct >= 60 ? 'Passaria. Leia os itens que errou — a diferença para o 10 costuma estar num item só por questão.'
+              : pct >= 40 ? 'Metade do caminho. Volte à Oficina e aos flashcards do assunto que mais derrubou você.'
+              :             'Ainda cru neste formato. Refaça devagar, lendo o veredito de cada item antes de seguir.';
+
+    const linhas = pvSess.log.map((l, i) => {
+      const q = PROVA.find(x => x.id === l.id);
+      return `<div class="result__row ${l.ok ? '' : 'bad'}" style="--i:${i}">
+          <span class="mk ${l.ok ? 'y' : 'n'}">${l.ok ? '✓' : '✕'}</span>
+          <span>${q.t}${l.ok ? '' : ` — você marcou <b>${q.alts[l.escolha]}</b>, era <b>${q.alts[q.c]}</b>`}</span>
+        </div>`;
+    }).join('');
+
+    /* De que assunto vieram os erros — é o que diz para onde voltar. */
+    const porMod = {};
+    pvSess.log.filter(l => !l.ok).forEach(l => {
+      const q = PROVA.find(x => x.id === l.id);
+      porMod[q.m] = (porMod[q.m] || 0) + 1;
+    });
+    const fracos = Object.keys(porMod)
+      .sort((a, b) => porMod[b] - porMod[a])
+      .map(id => `<button class="pvfraco" data-mod="${id}">§${pad(id)} ${mod(parseInt(id, 10)).t}<i>→</i></button>`)
+      .join('');
+
+    raiz.innerHTML = `
+      <div class="result">
+        <div class="tel__k" style="color:var(--ink-25)">Simulado concluído</div>
+        <div class="result__big">${pontos.toString().replace('.', ',')}<small>/${total}</small></div>
+        <div class="result__msg">${msg}</div>
+        <div class="btnrow btnrow--split">
+          <button class="btn btn--solid" id="pvAgain">Novo simulado</button>
+          <button class="btn" id="pvBack">Voltar ao começo</button>
+        </div>
+        ${fracos ? `<div class="pvfracos"><div class="tel__k" style="margin-bottom:10px">
+          Onde você perdeu ponto</div>${fracos}</div>` : ''}
+        <div class="result__list">${linhas}</div>
+      </div>`;
+
+    $('#pvAgain').addEventListener('click', () => iniciarProva(pvSess.ids.length));
+    $('#pvBack').addEventListener('click', () => { pvSess = null; renderProva(); window.scrollTo(0, 0); });
+    $$('.pvfraco').forEach(b => b.addEventListener('click', () => {
+      cardFilter = 'm' + b.dataset.mod;
+      pvSess = null;
+      go('cards');
+    }));
+    return;
+  }
+
+  /* ------------------------------------------------------------ questão */
+  const q = PROVA.find(x => x.id === pvSess.ids[pvSess.i]);
+  const m = mod(q.m);
+  const respondida = pvSess.escolha !== null;
+  const acertou = respondida && pvSess.escolha === q.c;
+  const pontosAte = pvSess.log.reduce((s, l) => s + (l.ok ? l.vale : 0), 0);
+
+  const romano = ['I', 'II', 'III', 'IV', 'V', 'VI'];
+
+  const itens = q.itens.map((it, i) => `
+    <div class="pvitem ${respondida ? (it.ok ? 'is-v' : 'is-f') : ''}" style="--i:${i}">
+      <span class="pvitem__n">${romano[i]}</span>
+      <div class="pvitem__c">
+        <div class="pvitem__t">${it.t}</div>
+        ${respondida ? `<div class="pvitem__v">${it.ok ? 'Verdadeiro' : 'Falso'}</div>
+                        <div class="pvitem__w">${it.why}</div>` : ''}
+      </div>
+    </div>`).join('');
+
+  const alts = q.alts.map((a, i) => {
+    let cls = '';
+    if (respondida) cls = (i === q.c) ? 'is-right' : (i === pvSess.escolha ? 'is-wrong' : 'dim');
+    return `<button class="opt ${cls}" data-i="${i}" ${respondida ? 'disabled' : ''} style="--i:${i}">
+        <span class="opt__k">${'ABCDE'.charAt(i)}</span><span>${a}</span></button>`;
+  }).join('');
+
+  const artefato = [
+    /* O desenho só aponta o erro depois que a pessoa respondeu — antes
+       disso ele sai limpo, senão a questão se entrega sozinha. */
+    q.svg ? `<div class="pvart">
+        <div class="pvart__k">${q.artefatoTitulo || 'Diagrama'}${
+          respondida ? ' <span class="pvart__rev">erro marcado em vermelho</span>' : ''}</div>
+        <div class="dframe dframe--svg">${SVGS[q.svg](respondida)}</div>
+      </div>` : '',
+    q.tabela ? `<div class="pvart">
+        <div class="pvart__k">${q.tabelaTitulo || 'Dados'}</div>
+        <div class="tabwrap"><table class="tab tab--dados">
+          <thead><tr>${q.tabela.cab.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead>
+          <tbody>${q.tabela.linhas.map((l, i) => `<tr style="--i:${i}">${
+            l.map(v => `<td>${esc(v)}</td>`).join('')}</tr>`).join('')}</tbody>
+        </table></div>
+      </div>` : '',
+    q.mr ? `<div class="pvart">
+        <div class="pvart__k">${q.mrTitulo || 'Modelo Relacional'}</div>
+        <div class="pre">${q.mr}</div>
+      </div>` : ''
+  ].join('');
+
+  raiz.innerHTML = `
+    <div class="pvbar">
+      <button class="ofback" id="pvSair">← Sair</button>
+      <span class="pvbar__t">${q.origem === 'professor' ? 'Questão do professor' : 'Questão de treino'}</span>
+      <span class="pvbar__n">${pvSess.i + 1} / ${pvSess.ids.length} · ${String(pontosAte).replace('.', ',')} pt</span>
+    </div>
+
+    <div class="pvtrack">${pvSess.ids.map((id, i) => {
+      const l = pvSess.log.find(x => x.id === id);
+      return `<i class="${i === pvSess.i ? 'now' : ''} ${l ? (l.ok ? 'ok' : 'bad') : ''}"></i>`;
+    }).join('')}</div>
+
+    <div class="pvhead">
+      <span class="idx">Pergunta ${pvSess.i + 1} · ${q.pontos} pontos</span>
+      <h2 class="pvhead__t">${q.t}</h2>
+      <span class="pvhead__m">§${pad(m.id)} ${m.t}</span>
+    </div>
+
+    <div class="pvcen prose">${q.cenario}</div>
+
+    ${artefato}
+
+    <div class="pvitens__k">Itens a serem analisados</div>
+    <div class="pvitens">${itens}</div>
+
+    <div class="pvalts__k">Está correta apenas a alternativa:</div>
+    <div class="opts">${alts}</div>
+
+    ${respondida ? `
+      <div class="explain">
+        <div class="explain__v ${acertou ? 'y' : 'n'}">${acertou
+          ? 'Você acertou — ' + q.pontos + ' pontos'
+          : 'Resposta certa: ' + q.alts[q.c]}</div>
+        ${q.problema ? `<div class="pvprob">${q.problema}</div>` : ''}
+        <div class="explain__d">${q.fecho}</div>
+      </div>
+      <div class="btnrow"><button class="btn btn--solid btn--wide" id="pvNext">
+        ${pvSess.i + 1 >= pvSess.ids.length ? 'Ver resultado' : 'Próxima questão →'}</button></div>` : ''}`;
+
+  $('#pvSair').addEventListener('click', () => {
+    if (pvSess.log.length && !confirm('Sair do simulado? A tentativa não será contada.')) return;
+    pvSess = null; renderProva(); window.scrollTo(0, 0);
+  });
+  $$('.opt', raiz).forEach(b => b.addEventListener('click', () => pvPick(parseInt(b.dataset.i, 10))));
+  const nx = $('#pvNext');
+  if (nx) nx.addEventListener('click', () => {
+    pvSess.i++; pvSess.escolha = null; drawProva(); window.scrollTo(0, 0);
+  });
+}
+
+function pvPick(i) {
+  if (pvSess.escolha !== null) return;
+  const q = PROVA.find(x => x.id === pvSess.ids[pvSess.i]);
+  const ok = i === q.c;
+  pvSess.escolha = i;
+  pvSess.log.push({ id: q.id, ok: ok, vale: q.pontos, escolha: i });
+
+  DB.gravarRespostaProva(pvSess.tentativa, q.id, i, ok, ok ? q.itens.length : null, q.itens.length);
+  DB.registrarEvento('prova', q.id, q.m, ok);
+
+  /* Alimenta o diagnóstico do Painel junto com as questões comuns. */
+  store.hist.push({ d: today(), m: q.m, ok: ok ? 1 : 0 });
+  if (store.hist.length > HIST_MAX) store.hist = store.hist.slice(-HIST_MAX);
+
+  drawProva();
+}
 
 /* ======================================================================
    BANCO — o esquema onde o seu progresso está guardado, aberto para
